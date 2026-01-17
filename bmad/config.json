@@ -1,0 +1,11 @@
+{
+  "type": "rig",
+  "version": 1,
+  "name": "bmad",
+  "git_url": "git@github.com:olibye/BMAD-METHOD.git",
+  "default_branch": "main",
+  "created_at": "2026-01-17T03:52:56.644918Z",
+  "beads": {
+    "prefix": "bm"
+  }
+}
