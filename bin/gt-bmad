@@ -29,6 +29,9 @@ Commands:
   agent show <agent>  Show agent details and menu
   workflow <cmd>      Manage BMAD workflows as beads
   phase <cmd>         BMAD phase orchestration (handoffs between agents)
+  ask <question>      Polecat asks human a question (blocks for answer)
+  answer <id> <resp>  Human answers a polecat's question
+  questions           List pending questions from polecats
   help                Show this help message
 
 Workflow Commands:
@@ -47,6 +50,13 @@ Phase Commands:
   phase advance                 Advance to next phase if gates met
   phase handoff <phase>         Create handoff context for phase transition
 
+Human Interaction (for BMAD agent questions):
+  ask "question"                Ask human a question and wait for answer
+  ask --menu "A|Opt1|B|Opt2"    Present a menu and wait for selection
+  answer <id> <response>        Answer a pending question
+  answer --latest <response>    Answer the most recent question
+  questions                     List all pending questions
+
 Examples:
   gt-bmad agent list
   gt-bmad agent show analyst
@@ -55,6 +65,10 @@ Examples:
   gt-bmad workflow dispatch dev DS
   gt-bmad phase status
   gt-bmad phase start 1
+  gt-bmad ask "What problem are we solving?"
+  gt-bmad ask --menu "A|Advanced|P|Party|C|Continue" "Select:"
+  gt-bmad questions
+  gt-bmad answer q-12345 "C"
 
 Environment:
   GT_BMAD_ROOT    Root directory of gt-bmad project (default: auto-detected)
@@ -102,6 +116,15 @@ main() {
             ;;
         phase)
             exec "$SCRIPT_DIR/gt-bmad-phase" "$@"
+            ;;
+        ask)
+            exec "$SCRIPT_DIR/gt-ask" "$@"
+            ;;
+        answer)
+            exec "$SCRIPT_DIR/gt-answer" "$@"
+            ;;
+        questions)
+            exec "$SCRIPT_DIR/gt-questions" "$@"
             ;;
         help|--help|-h)
             usage

@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+#
+# gt-ask - Polecat asks human a question and waits for response
+#
+# When BMAD agents need human input (discovery questions, A/P/C menus, etc.),
+# polecats use this command to pause, display the question, and wait for an answer.
+#
+# Usage:
+#   gt ask "What is the core problem we're solving?"
+#   gt ask --menu "A|Advanced elicitation|P|Party mode|C|Continue"
+#   gt ask --choices "1|User-selected|2|AI-recommended|3|Random|4|Progressive"
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GT_ROOT="${GT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+GT_ROLE="${GT_ROLE:-unknown}"
+GT_RIG="${GT_RIG:-unknown}"
+
+# Runtime directory for questions
+QUESTIONS_DIR="$GT_ROOT/.runtime/questions"
+mkdir -p "$QUESTIONS_DIR"
+
+# Colors and formatting
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Box drawing characters
+BOX_TL='╭'
+BOX_TR='╮'
+BOX_BL='╰'
+BOX_BR='╯'
+BOX_H='─'
+BOX_V='│'
+
+error() { echo -e "${RED}error:${NC} $1" >&2; exit 1; }
+info() { echo -e "${BLUE}info:${NC} $1"; }
+success() { echo -e "${GREEN}✓${NC} $1"; }
+
+usage() {
+    cat <<EOF
+gt-ask - Polecat asks human a question and waits for response
+
+Usage: gt ask [options] <question>
+
+Options:
+  --menu <spec>       Present a menu of choices (format: "key|label|key|label|...")
+  --choices <spec>    Present numbered choices (format: "1|label|2|label|...")
+  --timeout <secs>    Timeout in seconds (default: 3600 = 1 hour)
+  --default <value>   Default value if timeout
+  --id <id>           Question ID (auto-generated if not provided)
+  --no-notify         Don't send mail notification
+  --no-wait           Don't wait for answer (async mode)
+
+Examples:
+  gt ask "What problem are we solving?"
+  gt ask --menu "A|Advanced|P|Party|C|Continue" "Select an option:"
+  gt ask --choices "1|Create new|2|Use existing" "How to proceed?"
+  gt ask --timeout 300 --default "C" "Continue? [C]"
+
+The polecat will block until:
+1. Human types answer directly in terminal
+2. Human runs: gt answer <question-id> <response>
+3. Timeout expires (uses default if provided)
+
+For humans to see pending questions:
+  gt questions                 # List all pending questions
+  gt answer <id> <response>    # Answer a specific question
+EOF
+}
+
+# Generate a unique question ID
+generate_question_id() {
+    echo "q-$(date +%s)-$$-$(openssl rand -hex 2)"
+}
+
+# Parse menu/choice spec into display format
+parse_menu_spec() {
+    local spec="$1"
+    local result=""
+
+    # Split by | and pair up
+    IFS='|' read -ra parts <<< "$spec"
+    for ((i=0; i<${#parts[@]}; i+=2)); do
+        local key="${parts[$i]}"
+        local label="${parts[$i+1]:-}"
+        if [[ -n "$label" ]]; then
+            result+="  [${key}] ${label}\n"
+        fi
+    done
+
+    echo -e "$result"
+}
+
+# Get valid keys from menu spec
+get_valid_keys() {
+    local spec="$1"
+    local keys=""
+
+    IFS='|' read -ra parts <<< "$spec"
+    for ((i=0; i<${#parts[@]}; i+=2)); do
+        keys+="${parts[$i]} "
+    done
+
+    echo "$keys"
+}
+
+# Display question in a prominent box
+display_question() {
+    local question="$1"
+    local menu_display="${2:-}"
+    local question_id="$3"
+
+    local width=70
+    local padding=2
+
+    echo ""
+    echo -e "${BOLD}${CYAN}"
+
+    # Top border
+    printf '%s' "$BOX_TL"
+    printf '%*s' "$width" '' | tr ' ' "$BOX_H"
+    printf '%s\n' "$BOX_TR"
+
+    # Title
+    printf '%s  %s%-*s%s\n' "$BOX_V" "${YELLOW}🤔 HUMAN INPUT NEEDED" "$((width-24))" "" "$BOX_V"
+
+    # Separator
+    printf '%s' "$BOX_V"
+    printf '%*s' "$width" '' | tr ' ' '─'
+    printf '%s\n' "$BOX_V"
+
+    # Question (word wrap)
+    local line=""
+    for word in $question; do
+        if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $((width - 4)) ]]; then
+            printf '%s  %-*s  %s\n' "$BOX_V" "$((width-4))" "$line" "$BOX_V"
+            line="$word"
+        else
+            [[ -n "$line" ]] && line+=" "
+            line+="$word"
+        fi
+    done
+    [[ -n "$line" ]] && printf '%s  %-*s  %s\n' "$BOX_V" "$((width-4))" "$line" "$BOX_V"
+
+    # Menu options if provided
+    if [[ -n "$menu_display" ]]; then
+        printf '%s  %-*s  %s\n' "$BOX_V" "$((width-4))" "" "$BOX_V"
+        while IFS= read -r opt_line; do
+            [[ -n "$opt_line" ]] && printf '%s  %s%-*s%s  %s\n' "$BOX_V" "${GREEN}" "$((width-4))" "$opt_line" "${NC}${CYAN}" "$BOX_V"
+        done <<< "$menu_display"
+    fi
+
+    # Separator
+    printf '%s' "$BOX_V"
+    printf '%*s' "$width" '' | tr ' ' '─'
+    printf '%s\n' "$BOX_V"
+
+    # Instructions
+    printf '%s  %s%-*s%s  %s\n' "$BOX_V" "${DIM}" "$((width-4))" "Type your answer below, or use: gt answer $question_id <response>" "${NC}${CYAN}" "$BOX_V"
+    printf '%s  %s%-*s%s  %s\n' "$BOX_V" "${DIM}" "$((width-4))" "Polecat: $GT_ROLE | Rig: $GT_RIG" "${NC}${CYAN}" "$BOX_V"
+
+    # Bottom border
+    printf '%s' "$BOX_BL"
+    printf '%*s' "$width" '' | tr ' ' "$BOX_H"
+    printf '%s\n' "$BOX_BR"
+
+    echo -e "${NC}"
+}
+
+# Create question file
+create_question_file() {
+    local question_id="$1"
+    local question="$2"
+    local menu_spec="${3:-}"
+    local timeout="$4"
+    local default_value="${5:-}"
+
+    local question_file="$QUESTIONS_DIR/$question_id.question"
+
+    cat > "$question_file" <<EOF
+{
+  "id": "$question_id",
+  "question": $(echo "$question" | jq -Rs .),
+  "menu_spec": $(echo "$menu_spec" | jq -Rs .),
+  "timeout": $timeout,
+  "default": $(echo "$default_value" | jq -Rs .),
+  "polecat": "$GT_ROLE",
+  "rig": "$GT_RIG",
+  "asked_at": "$(date -Iseconds)",
+  "status": "pending"
+}
+EOF
+
+    echo "$question_file"
+}
+
+# Wait for answer
+wait_for_answer() {
+    local question_id="$1"
+    local timeout="$2"
+    local default_value="${3:-}"
+    local menu_spec="${4:-}"
+
+    local answer_file="$QUESTIONS_DIR/$question_id.answer"
+    local question_file="$QUESTIONS_DIR/$question_id.question"
+    local start_time=$(date +%s)
+
+    # Read from terminal OR wait for answer file
+    while true; do
+        # Check if answer file exists (from gt answer command)
+        if [[ -f "$answer_file" ]]; then
+            local answer
+            answer=$(cat "$answer_file")
+            rm -f "$answer_file" "$question_file"
+            echo "$answer"
+            return 0
+        fi
+
+        # Check timeout
+        local elapsed=$(( $(date +%s) - start_time ))
+        if [[ $elapsed -ge $timeout ]]; then
+            if [[ -n "$default_value" ]]; then
+                echo -e "${YELLOW}Timeout reached, using default: $default_value${NC}" >&2
+                rm -f "$question_file"
+                echo "$default_value"
+                return 0
+            else
+                echo -e "${RED}Timeout reached with no answer${NC}" >&2
+                rm -f "$question_file"
+                return 1
+            fi
+        fi
+
+        # Try to read from terminal (non-blocking-ish with timeout)
+        local input=""
+        if read -t 1 -r input 2>/dev/null; then
+            if [[ -n "$input" ]]; then
+                # Validate if menu spec provided
+                if [[ -n "$menu_spec" ]]; then
+                    local valid_keys
+                    valid_keys=$(get_valid_keys "$menu_spec")
+                    local input_upper="${input^^}"
+
+                    if [[ " $valid_keys " != *" $input_upper "* ]]; then
+                        echo -e "${RED}Invalid option: $input${NC}" >&2
+                        echo -e "${DIM}Valid options: $valid_keys${NC}" >&2
+                        continue
+                    fi
+                    input="$input_upper"
+                fi
+
+                rm -f "$question_file"
+                echo "$input"
+                return 0
+            fi
+        fi
+    done
+}
+
+# Send notification mail
+send_notification() {
+    local question_id="$1"
+    local question="$2"
+
+    # Check if gt mail exists
+    if command -v gt &>/dev/null; then
+        gt mail send "${GT_RIG}/witness" \
+            -s "QUESTION: Polecat $GT_ROLE needs input" \
+            -m "Question ID: $question_id
+
+$question
+
+To answer:
+  gt answer $question_id <your-response>
+
+Or attach to polecat terminal and type directly."  2>/dev/null || true
+    fi
+}
+
+# Main
+main() {
+    local question=""
+    local menu_spec=""
+    local choices_spec=""
+    local timeout=3600
+    local default_value=""
+    local question_id=""
+    local no_notify=false
+    local no_wait=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --menu)
+                menu_spec="$2"
+                shift 2
+                ;;
+            --choices)
+                choices_spec="$2"
+                shift 2
+                ;;
+            --timeout)
+                timeout="$2"
+                shift 2
+                ;;
+            --default)
+                default_value="$2"
+                shift 2
+                ;;
+            --id)
+                question_id="$2"
+                shift 2
+                ;;
+            --no-notify)
+                no_notify=true
+                shift
+                ;;
+            --no-wait)
+                no_wait=true
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            -*)
+                error "Unknown option: $1"
+                ;;
+            *)
+                question="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$question" ]]; then
+        error "Question required. Usage: gt ask <question>"
+    fi
+
+    # Generate question ID if not provided
+    [[ -z "$question_id" ]] && question_id=$(generate_question_id)
+
+    # Combine menu and choices into single spec
+    local combined_spec="$menu_spec$choices_spec"
+
+    # Parse menu display
+    local menu_display=""
+    if [[ -n "$combined_spec" ]]; then
+        menu_display=$(parse_menu_spec "$combined_spec")
+    fi
+
+    # Create question file
+    create_question_file "$question_id" "$question" "$combined_spec" "$timeout" "$default_value"
+
+    # Display the question
+    display_question "$question" "$menu_display" "$question_id"
+
+    # Send notification (unless disabled)
+    if ! $no_notify; then
+        send_notification "$question_id" "$question"
+    fi
+
+    # Async mode - just return question ID
+    if $no_wait; then
+        echo "$question_id"
+        return 0
+    fi
+
+    # Wait for answer
+    echo -e "${CYAN}▸${NC} "
+    local answer
+    if answer=$(wait_for_answer "$question_id" "$timeout" "$default_value" "$combined_spec"); then
+        echo ""
+        success "Answer received: $answer"
+        echo "$answer"
+        return 0
+    else
+        echo ""
+        error "No answer received within timeout"
+    fi
+}
+
+main "$@"

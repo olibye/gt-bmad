@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+#
+# gt-answer - Human answers a polecat's question
+#
+# When polecats ask questions via 'gt ask', humans can respond using this command.
+#
+# Usage:
+#   gt answer <question-id> <response>
+#   gt answer q-12345 "C"
+#   gt answer q-12345 "We're building a task management app"
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GT_ROOT="${GT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Runtime directory for questions
+QUESTIONS_DIR="$GT_ROOT/.runtime/questions"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+NC='\033[0m'
+
+error() { echo -e "${RED}error:${NC} $1" >&2; exit 1; }
+success() { echo -e "${GREEN}✓${NC} $1"; }
+info() { echo -e "${BLUE}info:${NC} $1"; }
+
+usage() {
+    cat <<EOF
+gt-answer - Human answers a polecat's question
+
+Usage: gt answer <question-id> <response>
+
+Arguments:
+  question-id    The question ID (e.g., q-12345-abc)
+  response       Your answer to the question
+
+Examples:
+  gt answer q-12345 "C"                    # Menu selection
+  gt answer q-12345 "2"                    # Choice selection
+  gt answer q-12345 "The core problem is..."  # Free-form answer
+
+To see pending questions:
+  gt questions
+
+To answer the most recent question:
+  gt answer --latest "C"
+EOF
+}
+
+# List pending questions
+list_questions() {
+    if [[ ! -d "$QUESTIONS_DIR" ]]; then
+        echo "No pending questions."
+        return 0
+    fi
+
+    local found=false
+    shopt -s nullglob
+    for qfile in "$QUESTIONS_DIR"/*.question; do
+        [[ -f "$qfile" ]] || continue
+        found=true
+
+        local id question polecat rig asked_at
+        id=$(basename "$qfile" .question)
+        question=$(jq -r '.question' "$qfile" 2>/dev/null || echo "?")
+        polecat=$(jq -r '.polecat' "$qfile" 2>/dev/null || echo "?")
+        rig=$(jq -r '.rig' "$qfile" 2>/dev/null || echo "?")
+        asked_at=$(jq -r '.asked_at' "$qfile" 2>/dev/null || echo "?")
+
+        echo -e "${CYAN}[$id]${NC} ${YELLOW}$polecat${NC} @ $rig"
+        echo "  Asked: $asked_at"
+        echo "  Q: ${question:0:60}..."
+        echo ""
+    done
+    shopt -u nullglob
+
+    if ! $found; then
+        echo "No pending questions."
+    fi
+}
+
+# Get latest question ID
+get_latest_question() {
+    if [[ ! -d "$QUESTIONS_DIR" ]]; then
+        return 1
+    fi
+
+    local latest=""
+    local latest_time=0
+
+    shopt -s nullglob
+    for qfile in "$QUESTIONS_DIR"/*.question; do
+        [[ -f "$qfile" ]] || continue
+
+        local mtime
+        mtime=$(stat -f %m "$qfile" 2>/dev/null || stat -c %Y "$qfile" 2>/dev/null || echo "0")
+
+        if [[ $mtime -gt $latest_time ]]; then
+            latest_time=$mtime
+            latest=$(basename "$qfile" .question)
+        fi
+    done
+    shopt -u nullglob
+
+    if [[ -n "$latest" ]]; then
+        echo "$latest"
+        return 0
+    fi
+
+    return 1
+}
+
+# Answer a question
+answer_question() {
+    local question_id="$1"
+    local response="$2"
+
+    local question_file="$QUESTIONS_DIR/$question_id.question"
+    local answer_file="$QUESTIONS_DIR/$question_id.answer"
+
+    # Check if question exists
+    if [[ ! -f "$question_file" ]]; then
+        error "Question not found: $question_id"
+    fi
+
+    # Validate response against menu if provided
+    local menu_spec
+    menu_spec=$(jq -r '.menu_spec' "$question_file" 2>/dev/null || echo "")
+
+    if [[ -n "$menu_spec" && "$menu_spec" != "null" && "$menu_spec" != "" ]]; then
+        # Extract valid keys
+        local valid_keys=""
+        IFS='|' read -ra parts <<< "$menu_spec"
+        for ((i=0; i<${#parts[@]}; i+=2)); do
+            valid_keys+="${parts[$i]} "
+        done
+
+        local response_upper="${response^^}"
+        if [[ " $valid_keys " != *" $response_upper "* ]]; then
+            echo -e "${YELLOW}Warning: '$response' may not be a valid menu option.${NC}"
+            echo -e "${YELLOW}Valid options: $valid_keys${NC}"
+            echo ""
+            read -p "Continue anyway? [y/N] " confirm
+            if [[ "${confirm,,}" != "y" ]]; then
+                exit 1
+            fi
+        fi
+    fi
+
+    # Write answer file (this will unblock the waiting polecat)
+    echo "$response" > "$answer_file"
+
+    # Show confirmation
+    local question polecat
+    question=$(jq -r '.question' "$question_file" 2>/dev/null || echo "?")
+    polecat=$(jq -r '.polecat' "$question_file" 2>/dev/null || echo "?")
+
+    success "Answer sent to polecat $polecat"
+    echo ""
+    echo -e "  ${DIM}Q: ${question:0:60}...${NC}"
+    echo -e "  ${GREEN}A: $response${NC}"
+}
+
+# Main
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    local question_id=""
+    local response=""
+    local use_latest=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --latest|-l)
+                use_latest=true
+                shift
+                ;;
+            --list)
+                list_questions
+                exit 0
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            -*)
+                error "Unknown option: $1"
+                ;;
+            *)
+                if [[ -z "$question_id" ]]; then
+                    question_id="$1"
+                elif [[ -z "$response" ]]; then
+                    response="$1"
+                else
+                    error "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Handle --latest
+    if $use_latest; then
+        if [[ -z "$question_id" ]]; then
+            # No question_id provided, get latest
+            question_id=$(get_latest_question) || error "No pending questions"
+        else
+            # question_id is actually the response
+            response="$question_id"
+            question_id=$(get_latest_question) || error "No pending questions"
+        fi
+    fi
+
+    if [[ -z "$question_id" ]]; then
+        error "Question ID required. Use 'gt questions' to see pending questions."
+    fi
+
+    if [[ -z "$response" ]]; then
+        # Interactive mode - show question and prompt for answer
+        local question_file="$QUESTIONS_DIR/$question_id.question"
+        if [[ ! -f "$question_file" ]]; then
+            error "Question not found: $question_id"
+        fi
+
+        local question menu_spec
+        question=$(jq -r '.question' "$question_file" 2>/dev/null || echo "?")
+        menu_spec=$(jq -r '.menu_spec' "$question_file" 2>/dev/null || echo "")
+
+        echo -e "${CYAN}Question:${NC} $question"
+        echo ""
+
+        if [[ -n "$menu_spec" && "$menu_spec" != "null" && "$menu_spec" != "" ]]; then
+            echo -e "${GREEN}Options:${NC}"
+            IFS='|' read -ra parts <<< "$menu_spec"
+            for ((i=0; i<${#parts[@]}; i+=2)); do
+                local key="${parts[$i]}"
+                local label="${parts[$i+1]:-}"
+                echo "  [$key] $label"
+            done
+            echo ""
+        fi
+
+        read -p "Your answer: " response
+        if [[ -z "$response" ]]; then
+            error "Answer cannot be empty"
+        fi
+    fi
+
+    answer_question "$question_id" "$response"
+}
+
+main "$@"

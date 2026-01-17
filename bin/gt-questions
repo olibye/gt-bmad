@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+#
+# gt-questions - List pending polecat questions
+#
+# Shows all questions from polecats that are waiting for human answers.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GT_ROOT="${GT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Runtime directory for questions
+QUESTIONS_DIR="$GT_ROOT/.runtime/questions"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+usage() {
+    cat <<EOF
+gt-questions - List pending polecat questions
+
+Usage: gt questions [options]
+
+Options:
+  --json    Output as JSON
+  --count   Just show count of pending questions
+
+Examples:
+  gt questions              # List all pending questions
+  gt questions --count      # Show count only
+  gt answer q-123 "yes"     # Answer a question
+EOF
+}
+
+# List pending questions
+list_questions() {
+    local json_mode=false
+    local count_mode=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json_mode=true; shift ;;
+            --count) count_mode=true; shift ;;
+            --help|-h) usage; exit 0 ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ ! -d "$QUESTIONS_DIR" ]]; then
+        if $count_mode; then
+            echo "0"
+        elif $json_mode; then
+            echo "[]"
+        else
+            echo "No pending questions."
+        fi
+        return 0
+    fi
+
+    local questions=()
+    local count=0
+
+    shopt -s nullglob
+    for qfile in "$QUESTIONS_DIR"/*.question; do
+        [[ -f "$qfile" ]] || continue
+        count=$((count + 1))
+
+        if $json_mode; then
+            questions+=("$(cat "$qfile")")
+        fi
+    done
+    shopt -u nullglob
+
+    if $count_mode; then
+        echo "$count"
+        return 0
+    fi
+
+    if $json_mode; then
+        if [[ ${#questions[@]} -eq 0 ]]; then
+            echo "[]"
+        else
+            printf '%s\n' "${questions[@]}" | jq -s '.'
+        fi
+        return 0
+    fi
+
+    # Human-readable format
+    if [[ $count -eq 0 ]]; then
+        echo -e "${GREEN}✓${NC} No pending questions."
+        return 0
+    fi
+
+    echo -e "${BOLD}${CYAN}📋 Pending Questions ($count)${NC}"
+    echo ""
+
+    shopt -s nullglob
+    for qfile in "$QUESTIONS_DIR"/*.question; do
+        [[ -f "$qfile" ]] || continue
+
+        local id question polecat rig asked_at menu_spec
+        id=$(basename "$qfile" .question)
+        question=$(jq -r '.question' "$qfile" 2>/dev/null || echo "?")
+        polecat=$(jq -r '.polecat' "$qfile" 2>/dev/null || echo "?")
+        rig=$(jq -r '.rig' "$qfile" 2>/dev/null || echo "?")
+        asked_at=$(jq -r '.asked_at' "$qfile" 2>/dev/null || echo "?")
+        menu_spec=$(jq -r '.menu_spec' "$qfile" 2>/dev/null || echo "")
+
+        echo -e "  ${YELLOW}$id${NC}"
+        echo -e "    Polecat: ${CYAN}$polecat${NC} @ $rig"
+        echo -e "    Asked:   ${DIM}$asked_at${NC}"
+        echo ""
+        echo -e "    ${BOLD}Q:${NC} $question"
+
+        if [[ -n "$menu_spec" && "$menu_spec" != "null" && "$menu_spec" != "" ]]; then
+            echo ""
+            echo -e "    ${GREEN}Options:${NC}"
+            IFS='|' read -ra parts <<< "$menu_spec"
+            for ((i=0; i<${#parts[@]}; i+=2)); do
+                local key="${parts[$i]}"
+                local label="${parts[$i+1]:-}"
+                echo -e "      [${BOLD}$key${NC}] $label"
+            done
+        fi
+
+        echo ""
+        echo -e "    ${DIM}Answer: gt answer $id <response>${NC}"
+        echo ""
+        echo "  ─────────────────────────────────────────"
+        echo ""
+    done
+    shopt -u nullglob
+}
+
+list_questions "$@"

@@ -76,6 +76,7 @@ Runtime Integration (call from within workflows):
   step-done <step-id>     Mark a step complete (used by BMAD workflows)
   context                 Show current molecule context (if any)
   continue <workflow>     Check for continuable session via beads
+  apc-menu [context]      Present standard A/P/C menu and wait for selection
 
 Examples:
   # Agent dispatch (recommended)
@@ -1020,6 +1021,32 @@ cmd_dispatch() {
     echo -e "${BLUE}--- End Workflow ---${NC}"
     echo ""
     echo -e "${GREEN}✓${NC} Workflow loaded. Execute according to workflow instructions."
+    echo ""
+    echo -e "${CYAN}📋 Human Interaction Protocol${NC}"
+    echo ""
+    echo "  When you need human input (A/P/C menus, discovery questions):"
+    echo ""
+    echo "  1. For A/P/C menus:"
+    echo "     gt-bmad ask --menu \"A|Advanced elicitation|P|Party mode|C|Continue\" \"Select option:\""
+    echo ""
+    echo "  2. For discovery questions:"
+    echo "     gt-bmad ask \"What is the core problem we're solving?\""
+    echo ""
+    echo "  3. For numbered choices:"
+    echo "     gt-bmad ask --choices \"1|User-selected|2|AI-recommended\" \"How to proceed?\""
+    echo ""
+    echo "  The polecat will block until the human responds. Human can answer via:"
+    echo "  - Typing directly in this terminal"
+    echo "  - Running: gt-bmad answer <question-id> <response>"
+    echo ""
+}
+
+# Helper for interactive workflow - present standard A/P/C menu
+cmd_apc_menu() {
+    local context="${1:-content}"
+    exec "$SCRIPT_DIR/../bin/gt-ask" \
+        --menu "A|Advanced elicitation - dive deeper into $context|P|Party mode - bring in other agents|C|Continue to next step" \
+        "What would you like to do?"
 }
 
 # Main dispatch
@@ -1068,6 +1095,9 @@ main() {
             ;;
         continue)
             cmd_continue "$@"
+            ;;
+        apc-menu|apc)
+            cmd_apc_menu "$@"
             ;;
         help|--help|-h)
             usage
