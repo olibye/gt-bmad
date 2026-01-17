@@ -1,0 +1,3 @@
+{"ts":"2026-01-17T03:58:13Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-77489","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-77489"},"visibility":"feed"}
+{"ts":"2026-01-17T04:05:49Z","source":"gt","type":"mail","actor":"mayor/","payload":{"subject":"🤝 HANDOFF: BMAD-GasTown Integration Research Complete","to":"mayor/"},"visibility":"feed"}
+{"ts":"2026-01-17T04:05:52Z","source":"gt","type":"handoff","actor":"mayor","payload":{"to_session":true},"visibility":"feed"}
