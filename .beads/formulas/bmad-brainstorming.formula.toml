@@ -1,0 +1,125 @@
+# Auto-generated from BMAD workflow: brainstorming
+# Source: /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming
+# Generated: 2026-01-17T12:16:50+00:00
+
+description = """
+ Facilitate interactive brainstorming sessions using diverse creative techniques and ideation methods
+
+## BMAD Workflow Integration
+
+This formula was auto-generated from a BMAD workflow. It enables:
+- Bead-based state tracking (instead of frontmatter)
+- Cross-session continuity via molecules
+- Central monitoring via Gas Town
+
+## Original Workflow Location
+/Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming
+
+## Usage
+1. Start the workflow: gt-bmad-workflow start brainstorming
+2. Work through steps using bd ready / bd close <step>
+3. Or use the original BMAD workflow for full interactive experience
+"""
+formula = "bmad-brainstorming"
+version = 1
+
+[[steps]]
+id = "step-01-session-setup"
+title = "Step 1: Session Setup and Continuation Detection"
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-01-session-setup.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-02a-user-selected"
+title = "Step 2a: User-Selected Techniques"
+needs = ["step-01-session-setup"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-02a-user-selected.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-02b-ai-recommended"
+title = "Step 2b: AI-Recommended Techniques"
+needs = ["step-01-session-setup"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-02b-ai-recommended.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-02c-random-selection"
+title = "Step 2c: Random Technique Selection"
+needs = ["step-01-session-setup"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-02c-random-selection.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-02d-progressive-flow"
+title = "Step 2d: Progressive Technique Flow"
+needs = ["step-01-session-setup"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-02d-progressive-flow.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-03-technique-execution"
+title = "Step 3: Interactive Technique Execution and Facilitation"
+needs = ["step-01-session-setup"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-03-technique-execution.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[[steps]]
+id = "step-04-idea-organization"
+title = "Step 4: Idea Organization and Action Planning"
+needs = ["step-03-technique-execution"]
+description = """
+\n
+
+**Source step file:** /Users/oliver/gt-bmad/bmad/polecats/furiosa/bmad/src/core/workflows/brainstorming/steps/step-04-idea-organization.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+[vars]
+[vars.output_file]
+description = "Path to the output document for this workflow session"
+required = false
+default = ""
+
+[vars.context_file]
+description = "Optional context file for project-specific guidance"
+required = false
+default = ""
