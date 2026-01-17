@@ -27,12 +27,23 @@ Commands:
   spawn <agent>       Spawn a polecat with BMAD agent persona
   agent list          List available BMAD agents
   agent show <agent>  Show agent details and menu
+  workflow <cmd>      Manage BMAD workflows as beads
   help                Show this help message
+
+Workflow Commands:
+  workflow list                 List available BMAD workflows
+  workflow generate <name>      Generate Gas Town formula from workflow
+  workflow start <name>         Start a tracked workflow (pour molecule)
+  workflow status [mol-id]      Show workflow progress
+  workflow step <mol-id>        Mark step complete, show next
+  workflow close <mol-id>       Complete the workflow
 
 Examples:
   gt-bmad agent list
   gt-bmad agent show analyst
   gt-bmad spawn analyst
+  gt-bmad workflow list
+  gt-bmad workflow start brainstorming
 
 Environment:
   GT_BMAD_ROOT    Root directory of gt-bmad project (default: auto-detected)
@@ -74,6 +85,9 @@ main() {
         agent)
             source "$SCRIPT_DIR/gt-bmad-agent"
             cmd_agent "$@"
+            ;;
+        workflow|wf)
+            exec "$SCRIPT_DIR/gt-bmad-workflow" "$@"
             ;;
         help|--help|-h)
             usage

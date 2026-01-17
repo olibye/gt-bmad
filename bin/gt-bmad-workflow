@@ -1,0 +1,518 @@
+#!/usr/bin/env bash
+#
+# gt-bmad-workflow - Track BMAD workflows as Gas Town beads
+#
+# Converts BMAD workflow directories to Gas Town formulas and manages
+# workflow execution state as molecules instead of frontmatter.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GT_BMAD_ROOT="${GT_BMAD_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# BMAD workflow locations (in priority order)
+# Note: Globs are expanded at runtime in get_workflow_paths()
+BMAD_WORKFLOW_PATH_PATTERNS=(
+    "$GT_BMAD_ROOT/bmad/src/core/workflows"
+    "$GT_BMAD_ROOT/bmad/src/modules/bmm/workflows"
+    "$GT_BMAD_ROOT/bmad/src/modules/bmb/workflows"
+    "$GT_BMAD_ROOT/bmad/src/modules/cis/workflows"
+    # Also check in polecat worktrees
+    "$GT_BMAD_ROOT/bmad/polecats/*/bmad/src/core/workflows"
+    "$GT_BMAD_ROOT/bmad/polecats/*/bmad/src/modules/bmm/workflows"
+)
+
+# Expand glob patterns to actual paths
+get_workflow_paths() {
+    local paths=()
+    for pattern in "${BMAD_WORKFLOW_PATH_PATTERNS[@]}"; do
+        # Use compgen to safely expand globs
+        while IFS= read -r path; do
+            [[ -d "$path" ]] && paths+=("$path")
+        done < <(compgen -G "$pattern" 2>/dev/null || true)
+        # Also add non-glob paths directly if they exist
+        if [[ "$pattern" != *'*'* && -d "$pattern" ]]; then
+            paths+=("$pattern")
+        fi
+    done
+    printf '%s\n' "${paths[@]}" | sort -u
+}
+
+# Formula output location
+FORMULA_OUTPUT_DIR="$GT_BMAD_ROOT/.beads/formulas"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+error() { echo -e "${RED}error:${NC} $1" >&2; exit 1; }
+info() { echo -e "${BLUE}info:${NC} $1"; }
+success() { echo -e "${GREEN}✓${NC} $1"; }
+warn() { echo -e "${YELLOW}warning:${NC} $1"; }
+
+usage() {
+    cat <<EOF
+gt-bmad-workflow - Track BMAD workflows as Gas Town beads
+
+Usage: gt-bmad-workflow <command> [options]
+
+Commands:
+  list                    List available BMAD workflows
+  generate <workflow>     Generate Gas Town formula from BMAD workflow
+  start <workflow>        Start a tracked workflow (pour molecule)
+  status [mol-id]         Show current workflow progress
+  step <mol-id>           Mark current step complete and show next
+  close <mol-id>          Complete the workflow
+
+Examples:
+  gt-bmad-workflow list
+  gt-bmad-workflow generate brainstorming
+  gt-bmad-workflow start brainstorming
+  gt-bmad-workflow status bmad-mol-12345
+  gt-bmad-workflow step bmad-mol-12345
+
+Integration:
+  Workflows tracked as beads enable:
+  - Cross-session continuity without frontmatter
+  - Central monitoring via bd mol status
+  - Handoffs between agents
+  - Progress queries (bd mol progress <id>)
+EOF
+}
+
+# Find workflow directory by name
+find_workflow() {
+    local name="$1"
+
+    # Check each search path
+    while IFS= read -r base_path; do
+        [[ -z "$base_path" ]] && continue
+
+        # Direct match
+        if [[ -d "$base_path/$name" ]]; then
+            echo "$base_path/$name"
+            return 0
+        fi
+        # Check subdirectories (for phase-organized workflows like 1-analysis/, 2-plan-workflows/)
+        for subdir in "$base_path"/*/"$name"; do
+            if [[ -d "$subdir" ]]; then
+                echo "$subdir"
+                return 0
+            fi
+        done
+    done < <(get_workflow_paths)
+
+    return 1
+}
+
+# List all available BMAD workflows
+cmd_list() {
+    echo -e "${CYAN}📋 Available BMAD Workflows${NC}"
+    echo ""
+
+    local found=0
+    local seen_workflows=""
+
+    while IFS= read -r base_path; do
+        [[ -z "$base_path" ]] && continue
+
+        # Find workflow directories (those with workflow.md or steps/)
+        while IFS= read -r -d '' workflow_dir; do
+            local workflow_name=$(basename "$workflow_dir")
+
+            # Skip if already seen (avoid duplicates from multiple worktrees)
+            if [[ "$seen_workflows" == *"|$workflow_name|"* ]]; then
+                continue
+            fi
+            seen_workflows="$seen_workflows|$workflow_name|"
+
+            local workflow_md="$workflow_dir/workflow.md"
+            local workflow_yaml="$workflow_dir/workflow.yaml"
+
+            # Skip if not a workflow directory
+            [[ -f "$workflow_md" || -f "$workflow_yaml" || -d "$workflow_dir/steps" ]] || continue
+
+            # Get description
+            local desc=""
+            if [[ -f "$workflow_md" ]]; then
+                # Extract description from frontmatter or first paragraph
+                desc=$(grep -m1 "^description:" "$workflow_md" 2>/dev/null | sed 's/description:\s*//' | head -c 60)
+                if [[ -z "$desc" ]]; then
+                    desc=$(grep -m1 "^\*\*Goal:\*\*" "$workflow_md" 2>/dev/null | sed 's/\*\*Goal:\*\*\s*//' | head -c 60)
+                fi
+            elif [[ -f "$workflow_yaml" ]]; then
+                desc=$(grep -m1 "^description:" "$workflow_yaml" 2>/dev/null | sed 's/description:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//' | head -c 60)
+            fi
+
+            # Check if formula exists
+            local formula_status=""
+            if [[ -f "$FORMULA_OUTPUT_DIR/bmad-$workflow_name.formula.toml" ]]; then
+                formula_status="${GREEN}[formula]${NC}"
+            fi
+
+            printf "  %-25s %s %s\n" "$workflow_name" "$formula_status" "$desc"
+            found=$((found + 1))
+        done < <(find "$base_path" -mindepth 1 -maxdepth 2 -type d -print0 2>/dev/null)
+    done < <(get_workflow_paths)
+
+    if [[ $found -eq 0 ]]; then
+        echo "  (no workflows found)"
+    fi
+
+    echo ""
+    echo "Use 'gt-bmad-workflow generate <name>' to create a formula for bead tracking."
+}
+
+# Extract step files from workflow directory
+get_step_files() {
+    local workflow_dir="$1"
+    local steps_dir="$workflow_dir/steps"
+
+    if [[ ! -d "$steps_dir" ]]; then
+        return 1
+    fi
+
+    # List step files in order
+    ls -1 "$steps_dir"/step-*.md 2>/dev/null | sort
+}
+
+# Parse step file to extract metadata
+parse_step() {
+    local step_file="$1"
+    local filename=$(basename "$step_file")
+
+    # Extract step ID from filename (e.g., step-01-session-setup.md -> session-setup)
+    local step_id=$(echo "$filename" | sed 's/^step-[0-9]*[a-z]*-//' | sed 's/\.md$//')
+
+    # Get step number and variant
+    local step_num=$(echo "$filename" | grep -oE 'step-[0-9]+' | sed 's/step-//')
+    local step_variant=$(echo "$filename" | grep -oE 'step-[0-9]+[a-z]' | sed 's/step-[0-9]*//')
+
+    # Extract title from first # heading
+    local title=$(grep -m1 "^# " "$step_file" | sed 's/^# //')
+
+    # Extract task from ## YOUR TASK: section
+    local task=$(awk '/^## YOUR TASK:/,/^##/' "$step_file" | grep -v "^##" | head -5 | tr '\n' ' ' | sed 's/^[[:space:]]*//' | head -c 200)
+
+    echo "$step_id|$step_num|$step_variant|$title|$task"
+}
+
+# Generate a Gas Town formula from BMAD workflow
+cmd_generate() {
+    local workflow_name="$1"
+
+    if [[ -z "$workflow_name" ]]; then
+        error "Usage: gt-bmad-workflow generate <workflow-name>"
+    fi
+
+    local workflow_dir
+    workflow_dir=$(find_workflow "$workflow_name") || error "Workflow not found: $workflow_name"
+
+    info "Generating formula from: $workflow_dir"
+
+    # Read workflow metadata
+    local workflow_md="$workflow_dir/workflow.md"
+    local workflow_yaml="$workflow_dir/workflow.yaml"
+    local description=""
+    local goal=""
+
+    if [[ -f "$workflow_md" ]]; then
+        # Extract description directly from workflow.md (frontmatter or body)
+        description=$(grep -m1 "^description:" "$workflow_md" | sed 's/description:\s*//' | sed "s/^['\"]//;s/['\"]$//")
+        goal=$(grep -m1 "^\*\*Goal:\*\*" "$workflow_md" | sed 's/\*\*Goal:\*\*//' | sed 's/^[[:space:]]*//')
+        if [[ -z "$description" && -n "$goal" ]]; then
+            description="$goal"
+        fi
+    elif [[ -f "$workflow_yaml" ]]; then
+        description=$(grep "^description:" "$workflow_yaml" | sed 's/description:\s*//' | sed "s/^['\"]//;s/['\"]$//")
+    fi
+
+    [[ -z "$description" ]] && description="BMAD $workflow_name workflow"
+
+    # Collect steps in first pass to build step ID map
+    local steps_info=()
+    local step_id_map=()  # Maps step numbers to full step IDs
+    local prev_main_step=""  # Previous non-variant step's full ID
+
+    # First pass: collect all step info
+    local temp_steps=()
+    while IFS= read -r step_file; do
+        [[ -z "$step_file" ]] && continue
+
+        local parsed
+        parsed=$(parse_step "$step_file")
+
+        local step_id step_num step_variant title task
+        IFS='|' read -r step_id step_num step_variant title task <<< "$parsed"
+
+        # Skip continuation steps (step-01b-continue.md)
+        if [[ "$step_id" == "continue" ]]; then
+            continue
+        fi
+
+        # Build full step ID
+        local full_step_id="step-$step_num"
+        if [[ -n "$step_variant" ]]; then
+            full_step_id="step-$step_num$step_variant-$step_id"
+        else
+            full_step_id="step-$step_num-$step_id"
+            # Record mapping for this step number
+            step_id_map[$step_num]="$full_step_id"
+        fi
+
+        temp_steps+=("$step_id|$step_num|$step_variant|$title|$task|$full_step_id")
+    done < <(get_step_files "$workflow_dir")
+
+    # Second pass: resolve dependencies
+    prev_main_step=""
+    for step_info in "${temp_steps[@]}"; do
+        local step_id step_num step_variant title task full_step_id
+        IFS='|' read -r step_id step_num step_variant title task full_step_id <<< "$step_info"
+
+        # Determine dependency
+        local needs=""
+        if [[ -n "$step_variant" ]]; then
+            # Variant step - depends on the main step from previous number
+            local base_num=$((10#$step_num - 1))
+            if [[ $base_num -gt 0 ]]; then
+                needs="${step_id_map[$base_num]}"
+            fi
+        elif [[ -n "$prev_main_step" ]]; then
+            # Main step depends on previous main step
+            needs="$prev_main_step"
+        fi
+
+        steps_info+=("$step_id|$step_num|$step_variant|$title|$task|$needs|$full_step_id")
+
+        # Track previous main step for non-variant steps
+        if [[ -z "$step_variant" ]]; then
+            prev_main_step="$full_step_id"
+        fi
+    done
+
+    if [[ ${#steps_info[@]} -eq 0 ]]; then
+        error "No step files found in workflow: $workflow_name"
+    fi
+
+    # Generate formula TOML
+    local formula_file="$FORMULA_OUTPUT_DIR/bmad-$workflow_name.formula.toml"
+    mkdir -p "$FORMULA_OUTPUT_DIR"
+
+    cat > "$formula_file" <<EOF
+# Auto-generated from BMAD workflow: $workflow_name
+# Source: $workflow_dir
+# Generated: $(date -Iseconds)
+
+description = """
+$description
+
+## BMAD Workflow Integration
+
+This formula was auto-generated from a BMAD workflow. It enables:
+- Bead-based state tracking (instead of frontmatter)
+- Cross-session continuity via molecules
+- Central monitoring via Gas Town
+
+## Original Workflow Location
+$workflow_dir
+
+## Usage
+1. Start the workflow: gt-bmad-workflow start $workflow_name
+2. Work through steps using bd ready / bd close <step>
+3. Or use the original BMAD workflow for full interactive experience
+"""
+formula = "bmad-$workflow_name"
+version = 1
+
+EOF
+
+    # Add steps
+    for step_info in "${steps_info[@]}"; do
+        local step_id step_num step_variant title task needs full_step_id
+        IFS='|' read -r step_id step_num step_variant title task needs full_step_id <<< "$step_info"
+
+        # Escape for TOML
+        title=$(echo "$title" | sed 's/"/\\"/g')
+        task=$(echo "$task" | sed 's/"/\\"/g' | sed 's/$/\\n/' | tr -d '\n')
+
+        cat >> "$formula_file" <<EOF
+[[steps]]
+id = "$full_step_id"
+title = "$title"
+EOF
+
+        if [[ -n "$needs" ]]; then
+            cat >> "$formula_file" <<EOF
+needs = ["$needs"]
+EOF
+        fi
+
+        cat >> "$formula_file" <<EOF
+description = """
+$task
+
+**Source step file:** $workflow_dir/steps/step-$step_num$step_variant-$step_id.md
+
+Load and follow the original BMAD step file for full instructions.
+Mark this step complete when done: bd close <this-step-id>
+"""
+
+EOF
+    done
+
+    # Add variables section
+    cat >> "$formula_file" <<EOF
+[vars]
+[vars.output_file]
+description = "Path to the output document for this workflow session"
+required = false
+default = ""
+
+[vars.context_file]
+description = "Optional context file for project-specific guidance"
+required = false
+default = ""
+EOF
+
+    success "Generated formula: $formula_file"
+    echo ""
+    echo "Steps found: ${#steps_info[@]}"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Review the formula: cat $formula_file"
+    echo "  2. Start a tracked workflow: gt-bmad-workflow start $workflow_name"
+    echo "  3. Or use bd formula show bmad-$workflow_name"
+}
+
+# Start a tracked workflow (pour molecule)
+cmd_start() {
+    local workflow_name="$1"
+    shift || true
+
+    if [[ -z "$workflow_name" ]]; then
+        error "Usage: gt-bmad-workflow start <workflow-name> [--var key=value ...]"
+    fi
+
+    local formula_name="bmad-$workflow_name"
+    local formula_file="$FORMULA_OUTPUT_DIR/$formula_name.formula.toml"
+
+    # Check if formula exists, generate if not
+    if [[ ! -f "$formula_file" ]]; then
+        warn "Formula not found, generating..."
+        cmd_generate "$workflow_name"
+    fi
+
+    info "Starting tracked workflow: $workflow_name"
+
+    # Pour the molecule (need direct DB access for pour)
+    local pour_output
+    if pour_output=$(bd --no-daemon mol pour "$formula_name" "$@" 2>&1); then
+        success "Workflow molecule created"
+        echo "$pour_output"
+
+        # Extract molecule ID from output (pattern: hq-mol-xxx or gt-xxx)
+        local mol_id
+        mol_id=$(echo "$pour_output" | grep -oE '(hq-mol-[a-z0-9]+|gt-[a-z0-9]+)' | head -1)
+
+        if [[ -n "$mol_id" ]]; then
+            echo ""
+            echo "Workflow tracking active:"
+            echo "  Molecule ID: $mol_id"
+            echo "  View progress: bd mol progress $mol_id"
+            echo "  Find next step: bd ready"
+            echo "  Complete step: bd close <step-id>"
+        fi
+    else
+        error "Failed to pour molecule: $pour_output"
+    fi
+}
+
+# Show workflow status
+cmd_status() {
+    local mol_id="$1"
+
+    if [[ -z "$mol_id" ]]; then
+        # Show all active BMAD workflows
+        info "Active BMAD workflow molecules:"
+        bd --no-daemon mol progress 2>/dev/null | grep -E "bmad-" || echo "  (no active BMAD workflows)"
+    else
+        bd --no-daemon mol progress "$mol_id"
+    fi
+}
+
+# Mark step complete and show next
+cmd_step() {
+    local mol_id="$1"
+
+    if [[ -z "$mol_id" ]]; then
+        error "Usage: gt-bmad-workflow step <mol-id>"
+    fi
+
+    # Show current step
+    info "Current position in workflow:"
+    bd --no-daemon mol current "$mol_id"
+
+    echo ""
+    echo "Ready steps:"
+    bd --no-daemon ready 2>/dev/null | head -10
+
+    echo ""
+    echo "To complete a step: bd close <step-id>"
+}
+
+# Close workflow
+cmd_close() {
+    local mol_id="$1"
+
+    if [[ -z "$mol_id" ]]; then
+        error "Usage: gt-bmad-workflow close <mol-id>"
+    fi
+
+    info "Squashing workflow molecule: $mol_id"
+    bd --no-daemon mol squash "$mol_id"
+}
+
+# Main dispatch
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        list)
+            cmd_list "$@"
+            ;;
+        generate|gen)
+            cmd_generate "$@"
+            ;;
+        start|run)
+            cmd_start "$@"
+            ;;
+        status)
+            cmd_status "$@"
+            ;;
+        step)
+            cmd_step "$@"
+            ;;
+        close|done)
+            cmd_close "$@"
+            ;;
+        help|--help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown command: $cmd (try 'gt-bmad-workflow help')"
+            ;;
+    esac
+}
+
+main "$@"
