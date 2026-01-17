@@ -42,3 +42,6 @@
 {"ts":"2026-01-17T18:08:38Z","source":"gt","type":"mail","actor":"bmad/witness","payload":{"subject":"RE: QUESTION - Escalated to Mayor","to":"bmad/rictus"},"visibility":"feed"}
 {"ts":"2026-01-17T18:09:07Z","source":"gt","type":"mail","actor":"mayor/","payload":{"subject":"RE: QUESTION from rictus","to":"bmad/witness"},"visibility":"feed"}
 {"ts":"2026-01-17T18:09:23Z","source":"gt","type":"mail","actor":"bmad/witness","payload":{"subject":"RE: No work available - stand down","to":"bmad/rictus"},"visibility":"feed"}
+{"ts":"2026-01-17T19:02:13Z","source":"gt","type":"spawn","actor":"gt","payload":{"polecat":"furiosa","rig":"foilracing"},"visibility":"feed"}
+{"ts":"2026-01-17T19:02:16Z","source":"gt","type":"sling","actor":"mayor","payload":{"bead":"fo-4h7","target":"foilracing/polecats/furiosa"},"visibility":"feed"}
+{"ts":"2026-01-17T19:05:28Z","source":"gt","type":"done","actor":"foilracing/furiosa","payload":{"bead":"furiosa-mkioc90o","branch":"polecat/furiosa-mkioc90o"},"visibility":"feed"}
