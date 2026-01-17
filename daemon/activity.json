@@ -1,1 +1,1 @@
-{"last_command":"bd list --type message --label cc:bmad/furiosa --status open --json","actor":"bmad/polecats/furiosa","timestamp":"2026-01-17T18:27:57Z"}
+{"last_command":"bd --no-daemon delete fo-foilracing-polecat-furiosa --hard --force","actor":"foilracing/polecats/furiosa","timestamp":"2026-01-17T19:05:31Z"}
