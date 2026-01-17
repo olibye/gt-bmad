@@ -30,3 +30,15 @@
 {"ts":"2026-01-17T17:03:17Z","source":"gt","type":"session_start","actor":"foilracing/refinery","payload":{"actor_pid":"foilracing/refinery-94635","cwd":"/Users/oliver/gt-bmad/foilracing/refinery/rig","role":"foilracing/refinery","session_id":"foilracing/refinery-94635","topic":"patrol"},"visibility":"feed"}
 {"ts":"2026-01-17T17:08:57Z","source":"gt","type":"done","actor":"foilracing/furiosa","payload":{"bead":"furiosa-mkik0j1u","branch":"polecat/furiosa-mkik0j1u"},"visibility":"feed"}
 {"ts":"2026-01-17T17:10:58Z","source":"gt","type":"mail","actor":"foilracing/witness","payload":{"subject":"ESCALATION: Lost polecat work (furiosa)","to":"mayor/"},"visibility":"feed"}
+{"ts":"2026-01-17T17:11:24Z","source":"gt","type":"spawn","actor":"gt","payload":{"polecat":"furiosa","rig":"foilracing"},"visibility":"feed"}
+{"ts":"2026-01-17T17:11:27Z","source":"gt","type":"sling","actor":"mayor","payload":{"bead":"fo-l2j","target":"foilracing/polecats/furiosa"},"visibility":"feed"}
+{"ts":"2026-01-17T17:13:00Z","source":"gt","type":"done","actor":"foilracing/furiosa","payload":{"bead":"furiosa-mkikdqzl","branch":"polecat/furiosa-mkikdqzl"},"visibility":"feed"}
+{"ts":"2026-01-17T17:14:15Z","source":"gt","type":"mail","actor":"foilracing/witness","payload":{"subject":"RESOLVED: furiosa work found in foilracing repo","to":"mayor/"},"visibility":"feed"}
+{"ts":"2026-01-17T17:15:09Z","source":"gt","type":"spawn","actor":"gt","payload":{"polecat":"furiosa","rig":"foilracing"},"visibility":"feed"}
+{"ts":"2026-01-17T17:15:11Z","source":"gt","type":"sling","actor":"mayor","payload":{"bead":"fo-p1w","target":"foilracing/polecats/furiosa"},"visibility":"feed"}
+{"ts":"2026-01-17T17:17:46Z","source":"gt","type":"done","actor":"foilracing/furiosa","payload":{"bead":"furiosa-mkikik4g","branch":"polecat/furiosa-mkikik4g"},"visibility":"feed"}
+{"ts":"2026-01-17T18:08:14Z","source":"gt","type":"mail","actor":"bmad/rictus","payload":{"subject":"QUESTION: Polecat polecat needs input","to":"bmad/witness"},"visibility":"feed"}
+{"ts":"2026-01-17T18:08:35Z","source":"gt","type":"mail","actor":"bmad/witness","payload":{"subject":"QUESTION from rictus: What is the core problem?","to":"mayor/"},"visibility":"feed"}
+{"ts":"2026-01-17T18:08:38Z","source":"gt","type":"mail","actor":"bmad/witness","payload":{"subject":"RE: QUESTION - Escalated to Mayor","to":"bmad/rictus"},"visibility":"feed"}
+{"ts":"2026-01-17T18:09:07Z","source":"gt","type":"mail","actor":"mayor/","payload":{"subject":"RE: QUESTION from rictus","to":"bmad/witness"},"visibility":"feed"}
+{"ts":"2026-01-17T18:09:23Z","source":"gt","type":"mail","actor":"bmad/witness","payload":{"subject":"RE: No work available - stand down","to":"bmad/rictus"},"visibility":"feed"}

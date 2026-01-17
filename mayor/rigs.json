@@ -8,6 +8,14 @@
         "repo": "",
         "prefix": "bm"
       }
+    },
+    "foilracing": {
+      "git_url": "git@github.com:olibye/foilracing.git",
+      "added_at": "2026-01-17T16:59:48.10407Z",
+      "beads": {
+        "repo": "",
+        "prefix": "fo"
+      }
     }
   }
 }
