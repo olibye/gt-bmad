@@ -68,6 +68,11 @@ Commands:
   step <mol-id>           Mark current step complete and show next
   close <mol-id>          Complete the workflow
 
+Runtime Integration (call from within workflows):
+  step-done <step-id>     Mark a step complete (used by BMAD workflows)
+  context                 Show current molecule context (if any)
+  continue <workflow>     Check for continuable session via beads
+
 Examples:
   gt-bmad-workflow list
   gt-bmad-workflow generate brainstorming
@@ -75,12 +80,21 @@ Examples:
   gt-bmad-workflow status bmad-mol-12345
   gt-bmad-workflow step bmad-mol-12345
 
+  # From within a running workflow:
+  gt-bmad-workflow step-done step-01-session-setup
+  gt-bmad-workflow context
+  gt-bmad-workflow continue brainstorming
+
 Integration:
   Workflows tracked as beads enable:
   - Cross-session continuity without frontmatter
   - Central monitoring via bd mol status
   - Handoffs between agents
   - Progress queries (bd mol progress <id>)
+
+Environment Variables:
+  BMAD_MOLECULE_ID    Set automatically when workflow starts via this tool
+  BMAD_WORKFLOW_NAME  The workflow name being executed
 EOF
 }
 
@@ -419,12 +433,23 @@ cmd_start() {
         mol_id=$(echo "$pour_output" | grep -oE '(hq-mol-[a-z0-9]+|gt-[a-z0-9]+)' | head -1)
 
         if [[ -n "$mol_id" ]]; then
+            # Save context for runtime integration
+            save_context "$mol_id" "$workflow_name"
+
             echo ""
             echo "Workflow tracking active:"
             echo "  Molecule ID: $mol_id"
             echo "  View progress: bd mol progress $mol_id"
             echo "  Find next step: bd ready"
-            echo "  Complete step: bd close <step-id>"
+            echo "  Complete step: gt-bmad-workflow step-done <step-id>"
+            echo ""
+            echo "For runtime integration, set these environment variables:"
+            echo "  export BMAD_MOLECULE_ID=$mol_id"
+            echo "  export BMAD_WORKFLOW_NAME=$workflow_name"
+            echo ""
+            echo "Or use context-aware commands:"
+            echo "  gt-bmad-workflow context     # Show current workflow"
+            echo "  gt-bmad-workflow step-done   # Mark step complete"
         fi
     else
         error "Failed to pour molecule: $pour_output"
@@ -476,6 +501,188 @@ cmd_close() {
     bd --no-daemon mol squash "$mol_id"
 }
 
+# Context file location
+get_context_file() {
+    echo "$GT_BMAD_ROOT/.runtime/workflow-context.json"
+}
+
+# Save workflow context for runtime integration
+save_context() {
+    local mol_id="$1"
+    local workflow_name="$2"
+    local context_file
+    context_file=$(get_context_file)
+
+    mkdir -p "$(dirname "$context_file")"
+
+    cat > "$context_file" <<EOF
+{
+  "molecule_id": "$mol_id",
+  "workflow_name": "$workflow_name",
+  "started_at": "$(date -Iseconds)"
+}
+EOF
+}
+
+# Load workflow context
+load_context() {
+    local context_file
+    context_file=$(get_context_file)
+
+    if [[ -f "$context_file" ]]; then
+        cat "$context_file"
+    else
+        echo "{}"
+    fi
+}
+
+# Clear workflow context
+clear_context() {
+    local context_file
+    context_file=$(get_context_file)
+    rm -f "$context_file"
+}
+
+# Get molecule ID from context or environment
+get_molecule_id() {
+    # First check environment variable
+    if [[ -n "${BMAD_MOLECULE_ID:-}" ]]; then
+        echo "$BMAD_MOLECULE_ID"
+        return 0
+    fi
+
+    # Fall back to context file
+    local context_file
+    context_file=$(get_context_file)
+
+    if [[ -f "$context_file" ]]; then
+        local mol_id
+        mol_id=$(grep -oE '"molecule_id":\s*"[^"]+"' "$context_file" | sed 's/"molecule_id":\s*"//' | sed 's/"$//')
+        if [[ -n "$mol_id" ]]; then
+            echo "$mol_id"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Runtime: Mark step complete (called from within workflow execution)
+cmd_step_done() {
+    local step_id="$1"
+
+    if [[ -z "$step_id" ]]; then
+        error "Usage: gt-bmad-workflow step-done <step-id>"
+    fi
+
+    # Get molecule context
+    local mol_id
+    if ! mol_id=$(get_molecule_id); then
+        warn "No molecule context found - step completion not tracked in beads"
+        warn "Hint: Start workflow with 'gt-bmad-workflow start <name>' for bead tracking"
+        return 0
+    fi
+
+    info "Marking step complete: $step_id (molecule: $mol_id)"
+
+    # Find the step bead ID
+    local step_bead_id
+    step_bead_id=$(bd --no-daemon search "$step_id" 2>/dev/null | grep -E "hq-mol-|bmad-" | head -1 | awk '{print $1}')
+
+    if [[ -z "$step_bead_id" ]]; then
+        # Try to find by title match
+        step_bead_id=$(bd --no-daemon list 2>/dev/null | grep -i "$step_id" | head -1 | awk '{print $1}')
+    fi
+
+    if [[ -n "$step_bead_id" ]]; then
+        if bd --no-daemon close "$step_bead_id" 2>/dev/null; then
+            success "Step bead closed: $step_bead_id"
+        else
+            warn "Could not close step bead: $step_bead_id"
+        fi
+    else
+        warn "Step bead not found for: $step_id"
+    fi
+}
+
+# Runtime: Show current molecule context
+cmd_context() {
+    local mol_id
+    if mol_id=$(get_molecule_id); then
+        echo -e "${CYAN}📎 Workflow Context${NC}"
+        echo ""
+        echo "Molecule ID: $mol_id"
+
+        local context_file
+        context_file=$(get_context_file)
+        if [[ -f "$context_file" ]]; then
+            local workflow_name started_at
+            workflow_name=$(grep -oE '"workflow_name":\s*"[^"]+"' "$context_file" | sed 's/"workflow_name":\s*"//' | sed 's/"$//')
+            started_at=$(grep -oE '"started_at":\s*"[^"]+"' "$context_file" | sed 's/"started_at":\s*"//' | sed 's/"$//')
+            echo "Workflow: $workflow_name"
+            echo "Started: $started_at"
+        fi
+
+        echo ""
+        echo "Progress:"
+        bd --no-daemon mol progress "$mol_id" 2>/dev/null || echo "  (could not fetch progress)"
+    else
+        echo -e "${YELLOW}No active workflow context${NC}"
+        echo ""
+        echo "Start a workflow with: gt-bmad-workflow start <workflow-name>"
+    fi
+}
+
+# Runtime: Check for continuable workflow session via beads
+cmd_continue() {
+    local workflow_name="$1"
+
+    if [[ -z "$workflow_name" ]]; then
+        error "Usage: gt-bmad-workflow continue <workflow-name>"
+    fi
+
+    local formula_name="bmad-$workflow_name"
+
+    info "Checking for continuable session: $workflow_name"
+
+    # Find open molecules for this workflow
+    local open_mols
+    open_mols=$(bd --no-daemon list --label molecule 2>/dev/null | grep -i "$formula_name" | grep -v "✓" || true)
+
+    if [[ -z "$open_mols" ]]; then
+        echo "no-session"
+        echo "" >&2
+        echo "No continuable session found for workflow: $workflow_name" >&2
+        echo "Start new session with: gt-bmad-workflow start $workflow_name" >&2
+        return 1
+    fi
+
+    # Get the most recent open molecule
+    local mol_id mol_title
+    mol_id=$(echo "$open_mols" | head -1 | awk '{print $1}')
+    mol_title=$(echo "$open_mols" | head -1 | sed 's/^[^ ]* //')
+
+    echo "found"
+    echo "$mol_id"
+
+    echo "" >&2
+    echo -e "${GREEN}✓${NC} Found continuable session:" >&2
+    echo "  Molecule: $mol_id" >&2
+    echo "  Title: $mol_title" >&2
+    echo "" >&2
+    echo "Progress:" >&2
+    bd --no-daemon mol progress "$mol_id" 2>/dev/null | sed 's/^/  /' >&2
+
+    echo "" >&2
+    echo "To resume, set environment:" >&2
+    echo "  export BMAD_MOLECULE_ID=$mol_id" >&2
+    echo "  export BMAD_WORKFLOW_NAME=$workflow_name" >&2
+
+    # Save context for this session
+    save_context "$mol_id" "$workflow_name"
+    success "Context saved for workflow continuation" >&2
+}
+
 # Main dispatch
 main() {
     if [[ $# -eq 0 ]]; then
@@ -504,6 +711,16 @@ main() {
             ;;
         close|done)
             cmd_close "$@"
+            ;;
+        # Runtime integration commands
+        step-done)
+            cmd_step_done "$@"
+            ;;
+        context)
+            cmd_context "$@"
+            ;;
+        continue)
+            cmd_continue "$@"
             ;;
         help|--help|-h)
             usage
