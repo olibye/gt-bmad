@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+#
+# gt-bmad-agent - BMAD agent management
+#
+# List and show BMAD agent details.
+#
+
+# Parse YAML field (simple extraction, works for single-line values)
+yaml_get() {
+    local file="$1"
+    local key="$2"
+    grep -E "^\s*${key}:" "$file" 2>/dev/null | head -1 | sed "s/.*${key}:\s*//" | sed 's/^["'"'"']//' | sed 's/["'"'"']$//'
+}
+
+# Parse multi-line YAML field (pipe-delimited block)
+yaml_get_block() {
+    local file="$1"
+    local key="$2"
+    awk -v key="$key" '
+        $0 ~ "^[[:space:]]*" key ":[[:space:]]*\\|" { capture=1; next }
+        capture && /^[[:space:]]*[a-zA-Z_]+:/ { capture=0 }
+        capture { print }
+    ' "$file" | sed 's/^[[:space:]]*//'
+}
+
+# Get agent file path
+get_agent_file() {
+    local agent="$1"
+    local file="$BMAD_AGENTS_DIR/${agent}.agent.yaml"
+    if [[ ! -f "$file" ]]; then
+        error "Agent not found: $agent (looked in $file)"
+    fi
+    echo "$file"
+}
+
+# List all available agents
+list_agents() {
+    if [[ ! -d "$BMAD_AGENTS_DIR" ]]; then
+        error "BMAD agents directory not found: $BMAD_AGENTS_DIR"
+    fi
+
+    echo "Available BMAD agents:"
+    echo ""
+    printf "  %-20s %-15s %s\n" "AGENT" "NAME" "TITLE"
+    printf "  %-20s %-15s %s\n" "-----" "----" "-----"
+
+    for file in "$BMAD_AGENTS_DIR"/*.agent.yaml; do
+        if [[ -f "$file" ]]; then
+            local agent_id=$(basename "$file" .agent.yaml)
+            local name=$(yaml_get "$file" "name")
+            local title=$(yaml_get "$file" "title")
+            local icon=$(yaml_get "$file" "icon")
+            printf "  %-20s %-15s %s %s\n" "$agent_id" "$name" "$icon" "$title"
+        fi
+    done
+}
+
+# Show agent details
+show_agent() {
+    local agent="$1"
+    local file=$(get_agent_file "$agent")
+
+    local name=$(yaml_get "$file" "name")
+    local title=$(yaml_get "$file" "title")
+    local icon=$(yaml_get "$file" "icon")
+    local role=$(yaml_get "$file" "role")
+    local identity=$(yaml_get "$file" "identity")
+    local communication_style=$(yaml_get "$file" "communication_style")
+
+    echo ""
+    echo -e "${BLUE}Agent:${NC} $agent"
+    echo -e "${BLUE}Name:${NC} $name"
+    echo -e "${BLUE}Title:${NC} $icon $title"
+    echo ""
+    echo -e "${BLUE}Role:${NC}"
+    echo "  $role"
+    echo ""
+    echo -e "${BLUE}Identity:${NC}"
+    echo "  $identity"
+    echo ""
+    echo -e "${BLUE}Communication Style:${NC}"
+    echo "  $communication_style"
+    echo ""
+
+    # Show principles
+    echo -e "${BLUE}Principles:${NC}"
+    yaml_get_block "$file" "principles" | while read -r line; do
+        if [[ -n "$line" ]]; then
+            echo "  $line"
+        fi
+    done
+    echo ""
+
+    # Show menu triggers
+    echo -e "${BLUE}Menu Triggers:${NC}"
+    awk '
+        /- trigger:/ {
+            gsub(/.*trigger:/, "");
+            trigger=$0;
+            getline;
+            if (/description:/) {
+                gsub(/.*description:/, "");
+                gsub(/^[[:space:]]*["'"'"']/, "");
+                gsub(/["'"'"'][[:space:]]*$/, "");
+                printf "  %-40s %s\n", trigger, $0
+            }
+        }
+    ' "$file"
+}
+
+# Main dispatch for agent subcommand
+cmd_agent() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: gt-bmad agent <list|show> [agent]"
+        exit 1
+    fi
+
+    local subcmd="$1"
+    shift
+
+    case "$subcmd" in
+        list|ls)
+            list_agents
+            ;;
+        show)
+            if [[ $# -eq 0 ]]; then
+                error "Usage: gt-bmad agent show <agent>"
+            fi
+            show_agent "$1"
+            ;;
+        *)
+            error "Unknown agent subcommand: $subcmd"
+            ;;
+    esac
+}

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# gt-bmad - BMAD integration for GasTown
+#
+# Spawns polecats with BMAD agent personas and manages BMAD workflows.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GT_BMAD_ROOT="${GT_BMAD_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+BMAD_AGENTS_DIR="$GT_BMAD_ROOT/bmad/mayor/rig/src/modules/bmm/agents"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+usage() {
+    cat <<EOF
+gt-bmad - BMAD integration for GasTown
+
+Usage: gt-bmad <command> [options]
+
+Commands:
+  spawn <agent>       Spawn a polecat with BMAD agent persona
+  agent list          List available BMAD agents
+  agent show <agent>  Show agent details and menu
+  help                Show this help message
+
+Examples:
+  gt-bmad agent list
+  gt-bmad agent show analyst
+  gt-bmad spawn analyst
+
+Environment:
+  GT_BMAD_ROOT    Root directory of gt-bmad project (default: auto-detected)
+EOF
+}
+
+error() {
+    echo -e "${RED}error:${NC} $1" >&2
+    exit 1
+}
+
+info() {
+    echo -e "${BLUE}info:${NC} $1"
+}
+
+success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}warning:${NC} $1"
+}
+
+# Dispatch to subcommands
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        spawn)
+            source "$SCRIPT_DIR/gt-bmad-spawn"
+            cmd_spawn "$@"
+            ;;
+        agent)
+            source "$SCRIPT_DIR/gt-bmad-agent"
+            cmd_agent "$@"
+            ;;
+        help|--help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown command: $cmd"
+            ;;
+    esac
+}
+
+main "$@"

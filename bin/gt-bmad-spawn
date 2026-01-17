@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+#
+# gt-bmad-spawn - Spawn polecats with BMAD agent personas
+#
+# Parses BMAD agent YAML, generates PRIME.md, and spawns a polecat.
+#
+
+# Parse YAML field (simple extraction)
+yaml_get() {
+    local file="$1"
+    local key="$2"
+    grep -E "^\s*${key}:" "$file" 2>/dev/null | head -1 | sed "s/.*${key}:\s*//" | sed 's/^["'"'"']//' | sed 's/["'"'"']$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'
+}
+
+# Parse multi-line YAML field (pipe-delimited block)
+yaml_get_block() {
+    local file="$1"
+    local key="$2"
+    awk -v key="$key" '
+        $0 ~ "^[[:space:]]*" key ":[[:space:]]*\\|" { capture=1; next }
+        capture && /^[[:space:]]*[a-zA-Z_]+:/ { capture=0 }
+        capture { print }
+    ' "$file" | sed 's/^[[:space:]]*//'
+}
+
+# Get agent file path
+get_agent_file() {
+    local agent="$1"
+    local file="$BMAD_AGENTS_DIR/${agent}.agent.yaml"
+    if [[ ! -f "$file" ]]; then
+        error "Agent not found: $agent (looked in $file)"
+    fi
+    echo "$file"
+}
+
+# Extract menu items as formatted list
+get_menu_items() {
+    local file="$1"
+    awk '
+        /- trigger:/ {
+            gsub(/.*trigger:/, "");
+            gsub(/^[[:space:]]*/, "");
+            trigger=$0;
+        }
+        /description:/ && trigger {
+            gsub(/.*description:/, "");
+            gsub(/^[[:space:]]*["'"'"']/, "");
+            gsub(/["'"'"'][[:space:]]*$/, "");
+            print "- " trigger ": " $0
+            trigger=""
+        }
+    ' "$file"
+}
+
+# Generate PRIME.md content from agent YAML
+generate_prime_md() {
+    local agent="$1"
+    local file=$(get_agent_file "$agent")
+
+    local name=$(yaml_get "$file" "name")
+    local title=$(yaml_get "$file" "title")
+    local icon=$(yaml_get "$file" "icon")
+    local role=$(yaml_get "$file" "role")
+    local identity=$(yaml_get "$file" "identity")
+    local communication_style=$(yaml_get "$file" "communication_style")
+    local principles=$(yaml_get_block "$file" "principles")
+    local critical_actions=$(yaml_get_block "$file" "critical_actions")
+    local menu_items=$(get_menu_items "$file")
+
+    cat <<EOF
+# BMAD Agent: $name - $icon $title
+
+You are **$name**, a $title in the BMAD methodology framework.
+
+## Role
+$role
+
+## Identity
+$identity
+
+## Communication Style
+$communication_style
+
+## Principles
+$principles
+
+EOF
+
+    if [[ -n "$critical_actions" ]]; then
+        cat <<EOF
+## Critical Actions
+$critical_actions
+
+EOF
+    fi
+
+    cat <<EOF
+## Available Workflows
+
+You can execute the following workflows when triggered:
+
+$menu_items
+
+## Integration with GasTown
+
+You are running as a GasTown polecat. Key commands:
+- \`gt hook\` - Check your current work assignment
+- \`gt prime\` - Reload context
+- \`gt done\` - Signal work completion
+- \`gt mail\` - Send/receive messages
+
+When you complete a workflow, update any beads and use \`gt done\` to signal completion.
+EOF
+}
+
+# Find rig root directory
+find_rig_root() {
+    local rig="$1"
+    local rig_root="$GT_BMAD_ROOT/$rig"
+    if [[ ! -d "$rig_root" ]]; then
+        # Try under bmad/
+        rig_root="$GT_BMAD_ROOT/bmad"
+        if [[ ! -d "$rig_root" ]]; then
+            error "Rig not found: $rig"
+        fi
+    fi
+    echo "$rig_root"
+}
+
+# Generate a polecat name from agent
+generate_polecat_name() {
+    local agent="$1"
+    local agent_file=$(get_agent_file "$agent")
+    local name=$(yaml_get "$agent_file" "name" | tr -d ' ')
+    # Use agent name (lowercase) + random suffix
+    echo "${name,,}-$(date +%s | tail -c 5)"
+}
+
+# Spawn a polecat with BMAD agent persona
+cmd_spawn() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: gt-bmad spawn <agent> [--rig <rig>] [--bead <bead>] [--name <name>] [--dry-run]"
+        echo ""
+        echo "Options:"
+        echo "  --rig <rig>    Target rig (default: bmad)"
+        echo "  --bead <bead>  Existing bead to assign (creates one if not provided)"
+        echo "  --name <name>  Polecat name (auto-generated if not provided)"
+        echo "  --dry-run      Show what would be done without doing it"
+        echo ""
+        echo "Available agents:"
+        for file in "$BMAD_AGENTS_DIR"/*.agent.yaml; do
+            if [[ -f "$file" ]]; then
+                local agent_id=$(basename "$file" .agent.yaml)
+                echo "  - $agent_id"
+            fi
+        done
+        exit 1
+    fi
+
+    local agent=""
+    local rig="bmad"
+    local bead=""
+    local polecat_name=""
+    local dry_run=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --rig)
+                rig="$2"
+                shift 2
+                ;;
+            --bead)
+                bead="$2"
+                shift 2
+                ;;
+            --name)
+                polecat_name="$2"
+                shift 2
+                ;;
+            --dry-run)
+                dry_run=true
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1"
+                ;;
+            *)
+                if [[ -z "$agent" ]]; then
+                    agent="$1"
+                else
+                    error "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$agent" ]]; then
+        error "Agent name required"
+    fi
+
+    # Validate agent exists
+    local agent_file=$(get_agent_file "$agent")
+    local name=$(yaml_get "$agent_file" "name")
+    local title=$(yaml_get "$agent_file" "title")
+    local icon=$(yaml_get "$agent_file" "icon")
+
+    # Generate polecat name if not provided
+    if [[ -z "$polecat_name" ]]; then
+        polecat_name=$(generate_polecat_name "$agent")
+    fi
+
+    info "Spawning polecat '$polecat_name' with BMAD agent: $name ($icon $title)"
+
+    # Find rig root
+    local rig_root=$(find_rig_root "$rig")
+    local polecats_dir="$rig_root/polecats"
+    local polecat_dir="$polecats_dir/$polecat_name"
+
+    # Generate CLAUDE.md content (persona for the polecat)
+    local persona_content=$(generate_prime_md "$agent")
+
+    if $dry_run; then
+        echo ""
+        echo "=== DRY RUN ==="
+        echo ""
+        echo "Would create polecat: $polecat_name"
+        echo "In rig: $rig ($rig_root)"
+        echo "Worktree: $polecat_dir"
+        if [[ -n "$bead" ]]; then
+            echo "Would assign bead: $bead"
+        else
+            echo "Would create bead for: BMAD $agent agent"
+        fi
+        echo ""
+        echo "Would generate CLAUDE.md:"
+        echo "---"
+        echo "$persona_content"
+        echo "---"
+        return 0
+    fi
+
+    # Step 1: Create bead if not provided
+    if [[ -z "$bead" ]]; then
+        info "Creating bead for BMAD $agent agent..."
+        bead=$(bd create --title "BMAD: $name ($title)" --type task --priority 2 2>&1 | grep -oE '[a-z]+-[a-z0-9]+' | head -1)
+        if [[ -z "$bead" ]]; then
+            error "Failed to create bead"
+        fi
+        success "Created bead: $bead"
+    fi
+
+    # Step 2: Create polecat identity
+    info "Creating polecat identity..."
+    gt polecat identity add "$rig" "$polecat_name" 2>/dev/null || true
+
+    # Step 3: Create worktree for polecat
+    info "Creating worktree..."
+    local branch_name="polecat/$polecat_name"
+
+    # Check if we're in a git repo and create worktree
+    cd "$rig_root"
+    if ! git worktree list | grep -q "$polecat_dir"; then
+        git worktree add -b "$branch_name" "$polecat_dir" HEAD 2>/dev/null || \
+        git worktree add "$polecat_dir" HEAD 2>/dev/null || \
+        error "Failed to create worktree"
+    fi
+
+    # Step 4: Create .claude directory and inject persona
+    info "Injecting BMAD persona..."
+    mkdir -p "$polecat_dir/.claude"
+
+    # Copy settings from polecats template if exists
+    if [[ -f "$polecats_dir/.claude/settings.json" ]]; then
+        cp "$polecats_dir/.claude/settings.json" "$polecat_dir/.claude/settings.json"
+    fi
+
+    # Write CLAUDE.md with persona
+    echo "$persona_content" > "$polecat_dir/CLAUDE.md"
+    success "Wrote CLAUDE.md with $agent persona"
+
+    # Step 5: Assign bead to polecat via hook
+    info "Assigning work to polecat..."
+    # Use gt sling to assign the bead and start the session
+    gt sling "$bead" "$rig/$polecat_name" --create 2>/dev/null || {
+        warn "gt sling failed, trying manual hook assignment..."
+        # Manual fallback - just note the assignment
+        echo "Bead $bead should be assigned to $polecat_name"
+    }
+
+    echo ""
+    success "Polecat '$polecat_name' spawned with BMAD $agent persona"
+    echo ""
+    echo "Polecat details:"
+    echo "  Name:      $polecat_name"
+    echo "  Agent:     $name ($icon $title)"
+    echo "  Rig:       $rig"
+    echo "  Worktree:  $polecat_dir"
+    echo "  Bead:      $bead"
+    echo ""
+    echo "To interact:"
+    echo "  tmux attach -t gt-$rig-$polecat_name"
+    echo ""
+    echo "To check status:"
+    echo "  gt polecat status $rig/$polecat_name"
+}
