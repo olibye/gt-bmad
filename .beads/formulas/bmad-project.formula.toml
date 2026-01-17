@@ -1,0 +1,579 @@
+# BMAD Full Project Lifecycle Formula
+#
+# Orchestrates the complete BMAD methodology across all 4 phases:
+# - Phase 1: Analysis (Analyst) → Product Brief
+# - Phase 2: Planning (PM, UX Designer) → PRD, UX Design
+# - Phase 3: Solutioning (Architect, PM) → Architecture, Epics/Stories
+# - Phase 4: Implementation (Dev, SM) → Code, Reviews
+#
+# This formula coordinates handoffs between phases and agents, ensuring
+# each phase's prerequisites are met before proceeding.
+
+description = """
+Complete BMAD project lifecycle from discovery to implementation.
+
+## Overview
+
+This formula guides a project through all 4 BMAD phases, spawning appropriate
+agents for each phase and ensuring proper handoffs between them.
+
+## Phase Structure
+
+| Phase | Name           | Primary Agent | Key Outputs                    |
+|-------|----------------|---------------|--------------------------------|
+| 1     | Analysis       | Analyst       | Product Brief                  |
+| 2     | Planning       | PM            | PRD, UX Design                 |
+| 3     | Solutioning    | Architect     | Architecture, Epics, Stories   |
+| 4     | Implementation | Dev           | Working Code, Reviews          |
+
+## Usage
+
+1. Start the workflow: bd mol pour bmad-project
+2. Work through phases using: gt-bmad-phase status / gt-bmad-phase advance
+3. Each phase spawns the appropriate agent(s)
+4. Phase gates prevent advancing before prerequisites are complete
+
+## Phase Commands
+
+- gt-bmad-phase list     # Show all phases
+- gt-bmad-phase status   # Current project status
+- gt-bmad-phase check N  # Check phase N prerequisites
+- gt-bmad-phase start N  # Start phase N
+- gt-bmad-phase advance  # Advance to next phase
+"""
+formula = "bmad-project"
+version = 1
+
+# ============================================================================
+# Phase 1: Analysis
+# ============================================================================
+
+[[steps]]
+id = "phase-1-start"
+title = "Phase 1: Start Analysis"
+description = """
+Begin the Analysis phase to understand the problem space.
+
+**Primary Agent:** Analyst
+
+**1. Initialize phase tracking:**
+```bash
+gt-bmad-phase start 1
+```
+
+This spawns an Analyst agent to work on discovery.
+
+**2. The Analyst will execute:**
+- Research workflow (competitive analysis, market research)
+- Create Product Brief workflow
+
+**3. Phase completion criteria:**
+- Product Brief document exists
+- Key problem statement defined
+- Target users identified
+- Success metrics outlined
+
+**Exit criteria:** Analyst agent spawned, working on Analysis phase."""
+
+[[steps]]
+id = "phase-1-research"
+title = "Execute: Research & Discovery"
+needs = ["phase-1-start"]
+description = """
+Analyst executes research workflows.
+
+**Workflows to run:**
+1. Research (competitive analysis, market research)
+2. Create Product Brief
+
+**From the Analyst agent, run:**
+```bash
+gt-bmad-workflow dispatch analyst BP  # Brainstorm/Brief
+```
+
+**Output artifact:** docs/product-brief.md
+
+**Exit criteria:** Research complete, product brief drafted."""
+
+[[steps]]
+id = "phase-1-complete"
+title = "Phase 1: Gate Check - Analysis Complete"
+needs = ["phase-1-research"]
+description = """
+Verify Analysis phase is complete before proceeding.
+
+**1. Check phase artifacts:**
+```bash
+gt-bmad-phase check 2  # Checks Phase 1 outputs
+```
+
+**2. Required artifacts:**
+- [ ] docs/product-brief.md exists
+- [ ] Problem statement is clear
+- [ ] Target users defined
+- [ ] Success metrics outlined
+
+**3. If gates not met:**
+- Return to Phase 1 research
+- Complete missing artifacts
+
+**4. If gates met:**
+- Mark this step complete
+- Proceed to Phase 2
+
+**Exit criteria:** Phase 1 artifacts verified, ready for Planning."""
+
+# ============================================================================
+# Phase 2: Planning
+# ============================================================================
+
+[[steps]]
+id = "phase-2-start"
+title = "Phase 2: Start Planning"
+needs = ["phase-1-complete"]
+description = """
+Begin the Planning phase to define requirements.
+
+**Primary Agent:** PM
+**Secondary Agent:** UX Designer
+
+**1. Create handoff context:**
+```bash
+gt-bmad-phase handoff 2
+```
+
+**2. Start Planning phase:**
+```bash
+gt-bmad-phase start 2
+```
+
+This spawns a PM agent to work on requirements.
+
+**3. The PM will execute:**
+- PRD creation workflow
+- Coordinate with UX Designer for design
+
+**Phase completion criteria:**
+- PRD document exists
+- User stories defined
+- UX design mockups/specs exist
+- Acceptance criteria clear
+
+**Exit criteria:** PM agent spawned, working on Planning phase."""
+
+[[steps]]
+id = "phase-2-prd"
+title = "Execute: PRD Creation"
+needs = ["phase-2-start"]
+description = """
+PM creates Product Requirements Document.
+
+**From the PM agent, run:**
+```bash
+gt-bmad-workflow dispatch pm CP  # Create PRD
+```
+
+**Key sections to complete:**
+- Problem Statement (from Phase 1)
+- User Stories
+- Functional Requirements
+- Non-functional Requirements
+- Acceptance Criteria
+
+**Output artifact:** docs/prd.md
+
+**Exit criteria:** PRD drafted and validated."""
+
+[[steps]]
+id = "phase-2-ux"
+title = "Execute: UX Design"
+needs = ["phase-2-prd"]
+description = """
+UX Designer creates user experience design.
+
+**Option 1: Spawn UX Designer:**
+```bash
+gt-bmad-phase spawn 2 ux-designer
+```
+
+**Option 2: PM can execute UX workflow:**
+```bash
+gt-bmad-workflow dispatch ux-designer UX  # Create UX Design
+```
+
+**Key outputs:**
+- User flows
+- Wireframes or mockups
+- Interaction patterns
+- Accessibility considerations
+
+**Output artifact:** docs/ux-design.md
+
+**Exit criteria:** UX design complete."""
+
+[[steps]]
+id = "phase-2-complete"
+title = "Phase 2: Gate Check - Planning Complete"
+needs = ["phase-2-ux"]
+description = """
+Verify Planning phase is complete before proceeding.
+
+**1. Check phase artifacts:**
+```bash
+gt-bmad-phase check 3  # Checks Phase 2 outputs
+```
+
+**2. Required artifacts:**
+- [ ] docs/prd.md exists
+- [ ] docs/ux-design.md exists
+- [ ] User stories defined
+- [ ] Acceptance criteria clear
+
+**3. If gates not met:**
+- Return to Phase 2 workflows
+- Complete missing artifacts
+
+**4. If gates met:**
+- Mark this step complete
+- Proceed to Phase 3
+
+**Exit criteria:** Phase 2 artifacts verified, ready for Solutioning."""
+
+# ============================================================================
+# Phase 3: Solutioning
+# ============================================================================
+
+[[steps]]
+id = "phase-3-start"
+title = "Phase 3: Start Solutioning"
+needs = ["phase-2-complete"]
+description = """
+Begin the Solutioning phase to design technical architecture.
+
+**Primary Agent:** Architect
+**Secondary Agent:** PM (for epics/stories)
+
+**1. Create handoff context:**
+```bash
+gt-bmad-phase handoff 3
+```
+
+**2. Start Solutioning phase:**
+```bash
+gt-bmad-phase start 3
+```
+
+This spawns an Architect agent to work on technical design.
+
+**3. The Architect will execute:**
+- Create Architecture workflow
+- Technology selection
+- System design
+
+**Phase completion criteria:**
+- Architecture document exists
+- Technology stack defined
+- System diagrams complete
+- Epics and stories created
+
+**Exit criteria:** Architect agent spawned, working on Solutioning phase."""
+
+[[steps]]
+id = "phase-3-architecture"
+title = "Execute: Architecture Design"
+needs = ["phase-3-start"]
+description = """
+Architect creates technical architecture.
+
+**From the Architect agent, run:**
+```bash
+gt-bmad-workflow dispatch architect CA  # Create Architecture
+```
+
+**Key sections to complete:**
+- System Overview
+- Technology Stack
+- Component Design
+- Data Model
+- API Design
+- Infrastructure
+- Security Considerations
+- Scalability Plan
+
+**Output artifact:** docs/architecture.md
+
+**Exit criteria:** Architecture document complete."""
+
+[[steps]]
+id = "phase-3-epics"
+title = "Execute: Create Epics and Stories"
+needs = ["phase-3-architecture"]
+description = """
+PM creates epics and user stories from PRD and Architecture.
+
+**Spawn PM or use existing:**
+```bash
+gt-bmad-phase spawn 3 pm
+```
+
+**From the PM agent, run:**
+```bash
+gt-bmad-workflow dispatch pm ES  # Epics & Stories
+```
+
+**Key outputs:**
+- Epic definitions (docs/epics/*.md)
+- User stories with acceptance criteria (docs/stories/*.md)
+- Story point estimates
+- Dependencies mapped
+
+**Exit criteria:** Epics and stories created, ready for implementation."""
+
+[[steps]]
+id = "phase-3-readiness"
+title = "Implementation Readiness Review"
+needs = ["phase-3-epics"]
+description = """
+Verify project is ready for implementation.
+
+**Run readiness check:**
+```bash
+gt-bmad-workflow dispatch pm IR  # Implementation Readiness
+```
+
+**Readiness checklist:**
+- [ ] Architecture reviewed and approved
+- [ ] All stories have acceptance criteria
+- [ ] Dependencies identified
+- [ ] Technical risks addressed
+- [ ] Dev environment specified
+
+**Exit criteria:** Readiness review passed."""
+
+[[steps]]
+id = "phase-3-complete"
+title = "Phase 3: Gate Check - Solutioning Complete"
+needs = ["phase-3-readiness"]
+description = """
+Verify Solutioning phase is complete before proceeding.
+
+**1. Check phase artifacts:**
+```bash
+gt-bmad-phase check 4  # Checks Phase 3 outputs
+```
+
+**2. Required artifacts:**
+- [ ] docs/architecture.md exists
+- [ ] docs/epics/*.md exists
+- [ ] docs/stories/*.md exists
+- [ ] Implementation readiness confirmed
+
+**3. If gates not met:**
+- Return to Phase 3 workflows
+- Complete missing artifacts
+
+**4. If gates met:**
+- Mark this step complete
+- Proceed to Phase 4
+
+**Exit criteria:** Phase 3 artifacts verified, ready for Implementation."""
+
+# ============================================================================
+# Phase 4: Implementation
+# ============================================================================
+
+[[steps]]
+id = "phase-4-start"
+title = "Phase 4: Start Implementation"
+needs = ["phase-3-complete"]
+description = """
+Begin the Implementation phase to build the solution.
+
+**Primary Agent:** Dev
+**Secondary Agents:** SM, PM
+
+**1. Create handoff context:**
+```bash
+gt-bmad-phase handoff 4
+```
+
+**2. Start Implementation phase:**
+```bash
+gt-bmad-phase start 4
+```
+
+This spawns a Dev agent to work on implementation.
+
+**3. The Dev will execute:**
+- Sprint Planning workflow
+- Dev Story workflow (per story)
+- Code Review workflow
+
+**Phase completion criteria:**
+- All stories implemented
+- Tests passing
+- Code reviewed
+- Documentation updated
+
+**Exit criteria:** Dev agent spawned, working on Implementation phase."""
+
+[[steps]]
+id = "phase-4-sprint-plan"
+title = "Execute: Sprint Planning"
+needs = ["phase-4-start"]
+description = """
+Plan the implementation sprint(s).
+
+**From the Dev or SM agent, run:**
+```bash
+gt-bmad-workflow dispatch dev SP  # Sprint Planning
+```
+
+**Key outputs:**
+- Sprint backlog defined
+- Story priorities set
+- Task breakdown complete
+- Sprint goals established
+
+**Exit criteria:** Sprint planned, ready to implement stories."""
+
+[[steps]]
+id = "phase-4-implement"
+title = "Execute: Implement Stories"
+needs = ["phase-4-sprint-plan"]
+description = """
+Implement user stories from the sprint backlog.
+
+**For each story, the Dev agent runs:**
+```bash
+gt-bmad-workflow dispatch dev DS  # Dev Story
+```
+
+**Dev Story workflow includes:**
+1. Understand story requirements
+2. Write implementation
+3. Write tests
+4. Self-review
+5. Create PR
+
+**Key outputs:**
+- Working code in src/
+- Tests passing
+- Documentation updated
+
+**Note:** This step may be repeated for multiple stories.
+Consider using the polecat convoy model for parallel story work.
+
+**Exit criteria:** All sprint stories implemented."""
+
+[[steps]]
+id = "phase-4-review"
+title = "Execute: Code Review"
+needs = ["phase-4-implement"]
+description = """
+Review implemented code for quality.
+
+**Run code review workflow:**
+```bash
+gt-bmad-workflow dispatch dev CR  # Code Review
+```
+
+**Review checklist:**
+- [ ] Code follows standards
+- [ ] Tests adequate
+- [ ] No security issues
+- [ ] Performance acceptable
+- [ ] Documentation complete
+
+**For comprehensive review, use convoy model:**
+```bash
+bd mol pour code-review --var pr=<pr-number>
+```
+
+This spawns parallel reviewers for:
+- Correctness
+- Performance
+- Security
+- Style
+- Resilience
+
+**Exit criteria:** Code reviewed and approved."""
+
+[[steps]]
+id = "phase-4-complete"
+title = "Phase 4: Implementation Complete"
+needs = ["phase-4-review"]
+description = """
+Verify Implementation phase is complete.
+
+**1. Check phase status:**
+```bash
+gt-bmad-phase status
+```
+
+**2. Completion checklist:**
+- [ ] All stories implemented
+- [ ] All tests passing
+- [ ] Code reviewed and merged
+- [ ] Documentation updated
+- [ ] Deployment ready
+
+**3. Sprint retrospective (optional):**
+```bash
+gt-bmad-workflow dispatch dev RET  # Retrospective
+```
+
+**Exit criteria:** Implementation phase complete, project delivered."""
+
+# ============================================================================
+# Project Completion
+# ============================================================================
+
+[[steps]]
+id = "project-complete"
+title = "Project Complete"
+needs = ["phase-4-complete"]
+description = """
+BMAD project lifecycle complete!
+
+**Final verification:**
+```bash
+gt-bmad-phase verify  # Check all artifacts
+gt-bmad-phase status  # Confirm all phases complete
+```
+
+**Project artifacts:**
+- docs/product-brief.md (Phase 1)
+- docs/prd.md (Phase 2)
+- docs/ux-design.md (Phase 2)
+- docs/architecture.md (Phase 3)
+- docs/epics/*.md (Phase 3)
+- docs/stories/*.md (Phase 3)
+- src/**/* (Phase 4)
+
+**Congratulations!** The project has progressed through all BMAD phases:
+1. Analysis → Understanding the problem
+2. Planning → Defining requirements
+3. Solutioning → Designing the solution
+4. Implementation → Building the solution
+
+**Exit criteria:** Full project lifecycle complete."""
+
+# ============================================================================
+# Variables
+# ============================================================================
+
+[vars]
+[vars.project_name]
+description = "Name of the project being developed"
+required = true
+
+[vars.project_root]
+description = "Root directory of the project"
+required = false
+default = "."
+
+[vars.rig]
+description = "Gas Town rig for spawning polecats"
+required = false
+default = "bmad"

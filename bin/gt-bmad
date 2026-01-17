@@ -28,22 +28,33 @@ Commands:
   agent list          List available BMAD agents
   agent show <agent>  Show agent details and menu
   workflow <cmd>      Manage BMAD workflows as beads
+  phase <cmd>         BMAD phase orchestration (handoffs between agents)
   help                Show this help message
 
 Workflow Commands:
   workflow list                 List available BMAD workflows
+  workflow dispatch <agent> <trigger>  Execute workflow by agent trigger
   workflow generate <name>      Generate Gas Town formula from workflow
   workflow start <name>         Start a tracked workflow (pour molecule)
   workflow status [mol-id]      Show workflow progress
-  workflow step <mol-id>        Mark step complete, show next
   workflow close <mol-id>       Complete the workflow
+
+Phase Commands:
+  phase list                    List all BMAD phases
+  phase status                  Show current project phase status
+  phase check <phase>           Check phase prerequisites
+  phase start <phase>           Start a phase (spawns primary agent)
+  phase advance                 Advance to next phase if gates met
+  phase handoff <phase>         Create handoff context for phase transition
 
 Examples:
   gt-bmad agent list
   gt-bmad agent show analyst
   gt-bmad spawn analyst
   gt-bmad workflow list
-  gt-bmad workflow start brainstorming
+  gt-bmad workflow dispatch dev DS
+  gt-bmad phase status
+  gt-bmad phase start 1
 
 Environment:
   GT_BMAD_ROOT    Root directory of gt-bmad project (default: auto-detected)
@@ -88,6 +99,9 @@ main() {
             ;;
         workflow|wf)
             exec "$SCRIPT_DIR/gt-bmad-workflow" "$@"
+            ;;
+        phase)
+            exec "$SCRIPT_DIR/gt-bmad-phase" "$@"
             ;;
         help|--help|-h)
             usage
