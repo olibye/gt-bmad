@@ -60,7 +60,11 @@ gt-bmad-workflow - Track BMAD workflows as Gas Town beads
 
 Usage: gt-bmad-workflow <command> [options]
 
-Commands:
+Agent Dispatch:
+  dispatch <agent> <trigger>  Execute workflow by agent menu trigger
+  triggers [agent]            List agent triggers (all or specific)
+
+Workflow Management:
   list                    List available BMAD workflows
   generate <workflow>     Generate Gas Town formula from BMAD workflow
   start <workflow>        Start a tracked workflow (pour molecule)
@@ -74,11 +78,16 @@ Runtime Integration (call from within workflows):
   continue <workflow>     Check for continuable session via beads
 
 Examples:
+  # Agent dispatch (recommended)
+  gt-bmad-workflow dispatch dev DS        # Run dev-story workflow
+  gt-bmad-workflow dispatch analyst BP    # Run brainstorm-project
+  gt-bmad-workflow triggers dev           # Show dev agent's triggers
+
+  # Workflow management
   gt-bmad-workflow list
   gt-bmad-workflow generate brainstorming
   gt-bmad-workflow start brainstorming
   gt-bmad-workflow status bmad-mol-12345
-  gt-bmad-workflow step bmad-mol-12345
 
   # From within a running workflow:
   gt-bmad-workflow step-done step-01-session-setup
@@ -683,6 +692,336 @@ cmd_continue() {
     success "Context saved for workflow continuation" >&2
 }
 
+# ============================================================================
+# Agent Dispatch Functions
+# ============================================================================
+
+# BMAD agents directory
+BMAD_AGENTS_DIR="$GT_BMAD_ROOT/bmad/mayor/rig/src/modules/bmm/agents"
+
+# Parse YAML field (simple extraction for single-line values)
+yaml_get() {
+    local file="$1"
+    local key="$2"
+    grep -E "^\s*${key}:" "$file" 2>/dev/null | head -1 | sed "s/.*${key}:\s*//" | sed 's/^["'"'"']//' | sed 's/["'"'"']$//'
+}
+
+# Get agent file path (with fuzzy matching)
+get_agent_file() {
+    local agent="$1"
+
+    # Exact match first
+    local file="$BMAD_AGENTS_DIR/${agent}.agent.yaml"
+    if [[ -f "$file" ]]; then
+        echo "$file"
+        return 0
+    fi
+
+    # Fuzzy match
+    local agent_lower="${agent,,}"
+    for f in "$BMAD_AGENTS_DIR"/*.agent.yaml; do
+        [[ -f "$f" ]] || continue
+        local base=$(basename "$f" .agent.yaml)
+        if [[ "${base,,}" == *"$agent_lower"* ]]; then
+            echo "$f"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Parse trigger field to extract patterns (e.g., "DS or fuzzy match on dev-story")
+parse_trigger_patterns() {
+    local trigger_field="$1"
+    local patterns=""
+
+    # Extract uppercase short codes (2-4 letters)
+    local short_codes
+    short_codes=$(echo "$trigger_field" | grep -oE '\b[A-Z]{2,4}\b' || true)
+    for code in $short_codes; do
+        patterns="$patterns ${code,,}"
+    done
+
+    # Extract kebab-case names
+    local kebab_names
+    kebab_names=$(echo "$trigger_field" | grep -oE '\b[a-z]+-[a-z]+(-[a-z]+)*\b' || true)
+    for name in $kebab_names; do
+        patterns="$patterns $name"
+    done
+
+    echo "$patterns" | xargs
+}
+
+# Match trigger to menu item in agent file
+match_agent_trigger() {
+    local agent_file="$1"
+    local trigger="$2"
+    local trigger_lower="${trigger,,}"
+
+    # Parse menu items from YAML
+    local in_menu=0
+    local current_trigger=""
+    local current_workflow=""
+    local current_description=""
+    local matched_workflow=""
+    local matched_description=""
+    local match_count=0
+
+    while IFS= read -r line; do
+        # Detect menu section
+        if [[ "$line" =~ ^[[:space:]]*menu: ]]; then
+            in_menu=1
+            continue
+        fi
+
+        # Exit menu section on non-indented non-empty line
+        if [[ $in_menu -eq 1 && "$line" =~ ^[^[:space:]] && -n "$line" ]]; then
+            in_menu=0
+        fi
+
+        [[ $in_menu -eq 0 ]] && continue
+
+        # Parse menu item fields
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*trigger: ]]; then
+            current_trigger=$(echo "$line" | sed 's/.*trigger:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+        elif [[ "$line" =~ ^[[:space:]]*workflow: ]]; then
+            current_workflow=$(echo "$line" | sed 's/.*workflow:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+        elif [[ "$line" =~ ^[[:space:]]*description: ]]; then
+            current_description=$(echo "$line" | sed 's/.*description:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+
+            # Check if this menu item matches our trigger
+            if [[ -n "$current_trigger" && -n "$current_workflow" ]]; then
+                local patterns
+                patterns=$(parse_trigger_patterns "$current_trigger")
+
+                for p in $patterns; do
+                    if [[ "$p" == "$trigger_lower" || "$p" == *"$trigger_lower"* || "$trigger_lower" == *"$p"* ]]; then
+                        matched_workflow="$current_workflow"
+                        matched_description="$current_description"
+                        match_count=$((match_count + 1))
+                        break
+                    fi
+                done
+            fi
+
+            # Reset for next item
+            current_trigger=""
+            current_workflow=""
+            current_description=""
+        fi
+    done < "$agent_file"
+
+    if [[ $match_count -gt 1 ]]; then
+        echo "AMBIGUOUS"
+        return 1
+    elif [[ -n "$matched_workflow" ]]; then
+        echo "$matched_workflow|$matched_description"
+        return 0
+    fi
+
+    return 1
+}
+
+# Resolve {project-root} placeholder in workflow path
+resolve_workflow_path() {
+    local workflow_path="$1"
+    local project_root="${BMAD_PROJECT_ROOT:-$(pwd)}"
+
+    echo "$workflow_path" | sed "s|{project-root}|$project_root|g"
+}
+
+# List triggers for agents
+cmd_triggers() {
+    local agent="${1:-}"
+
+    if [[ -n "$agent" ]]; then
+        # Show specific agent's triggers
+        local agent_file
+        if ! agent_file=$(get_agent_file "$agent"); then
+            error "Agent not found: $agent"
+        fi
+
+        local name icon title
+        name=$(yaml_get "$agent_file" "name")
+        icon=$(yaml_get "$agent_file" "icon")
+        title=$(yaml_get "$agent_file" "title")
+
+        echo -e "${CYAN}$icon $name ($title) - Triggers${NC}"
+        echo ""
+
+        # Parse and display menu items
+        local in_menu=0
+        local current_trigger=""
+        local current_workflow=""
+        local current_description=""
+
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*menu: ]]; then
+                in_menu=1
+                continue
+            fi
+
+            if [[ $in_menu -eq 1 && "$line" =~ ^[^[:space:]] && -n "$line" ]]; then
+                in_menu=0
+            fi
+
+            [[ $in_menu -eq 0 ]] && continue
+
+            if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*trigger: ]]; then
+                current_trigger=$(echo "$line" | sed 's/.*trigger:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+            elif [[ "$line" =~ ^[[:space:]]*workflow: ]]; then
+                current_workflow=$(echo "$line" | sed 's/.*workflow:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+            elif [[ "$line" =~ ^[[:space:]]*description: ]]; then
+                current_description=$(echo "$line" | sed 's/.*description:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+
+                if [[ -n "$current_trigger" ]]; then
+                    local patterns
+                    patterns=$(parse_trigger_patterns "$current_trigger")
+                    echo -e "  ${GREEN}${patterns// / | }${NC}"
+                    echo "    $current_description"
+                    echo -e "    ${BLUE}$current_workflow${NC}"
+                    echo ""
+                fi
+
+                current_trigger=""
+                current_workflow=""
+                current_description=""
+            fi
+        done < "$agent_file"
+    else
+        # List all agents and their triggers
+        echo -e "${CYAN}📋 BMAD Agent Triggers${NC}"
+        echo ""
+        printf "  %-20s %-15s %s\n" "AGENT" "NAME" "TRIGGERS"
+        printf "  %-20s %-15s %s\n" "─────" "────" "────────"
+
+        for f in "$BMAD_AGENTS_DIR"/*.agent.yaml; do
+            [[ -f "$f" ]] || continue
+
+            local agent_id name triggers_list
+            agent_id=$(basename "$f" .agent.yaml)
+            name=$(yaml_get "$f" "name")
+
+            # Collect triggers
+            triggers_list=""
+            local in_menu=0
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[[:space:]]*menu: ]]; then
+                    in_menu=1
+                    continue
+                fi
+                if [[ $in_menu -eq 1 && "$line" =~ ^[^[:space:]] && -n "$line" ]]; then
+                    in_menu=0
+                fi
+                [[ $in_menu -eq 0 ]] && continue
+
+                if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*trigger: ]]; then
+                    local trigger
+                    trigger=$(echo "$line" | sed 's/.*trigger:\s*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+                    local patterns
+                    patterns=$(parse_trigger_patterns "$trigger")
+                    local first_pattern
+                    first_pattern=$(echo "$patterns" | awk '{print $1}')
+                    if [[ -n "$first_pattern" ]]; then
+                        [[ -n "$triggers_list" ]] && triggers_list="$triggers_list, "
+                        triggers_list="$triggers_list$first_pattern"
+                    fi
+                fi
+            done < "$f"
+
+            # Truncate if too long
+            if [[ ${#triggers_list} -gt 40 ]]; then
+                triggers_list="${triggers_list:0:37}..."
+            fi
+
+            printf "  %-20s %-15s %s\n" "$agent_id" "$name" "$triggers_list"
+        done
+
+        echo ""
+        echo "  Run 'gt-bmad-workflow triggers <agent>' for detailed trigger info."
+    fi
+}
+
+# Dispatch workflow by agent trigger
+cmd_dispatch() {
+    local agent="$1"
+    local trigger="$2"
+    local dry_run="${3:-}"
+
+    if [[ -z "$agent" || -z "$trigger" ]]; then
+        error "Usage: gt-bmad-workflow dispatch <agent> <trigger> [--dry-run]"
+    fi
+
+    # Find agent file
+    local agent_file
+    if ! agent_file=$(get_agent_file "$agent"); then
+        error "Agent not found: $agent"
+    fi
+
+    local agent_name agent_icon agent_title
+    agent_name=$(yaml_get "$agent_file" "name")
+    agent_icon=$(yaml_get "$agent_file" "icon")
+    agent_title=$(yaml_get "$agent_file" "title")
+
+    # Match trigger
+    local match_result
+    if ! match_result=$(match_agent_trigger "$agent_file" "$trigger"); then
+        if [[ "$match_result" == "AMBIGUOUS" ]]; then
+            error "Ambiguous trigger '$trigger' - matches multiple menu items"
+        else
+            error "No matching trigger found for '$trigger' in agent '$agent'"
+        fi
+    fi
+
+    local workflow_path workflow_desc
+    workflow_path=$(echo "$match_result" | cut -d'|' -f1)
+    workflow_desc=$(echo "$match_result" | cut -d'|' -f2-)
+
+    # Resolve path
+    local resolved_path
+    resolved_path=$(resolve_workflow_path "$workflow_path")
+
+    # Display info
+    echo -e "${CYAN}🔄 Workflow Dispatch${NC}"
+    echo ""
+    echo "  Agent:    $agent_icon $agent_name ($agent_title)"
+    echo "  Trigger:  $trigger"
+    echo "  Workflow: $workflow_desc"
+    echo "  Path:     $resolved_path"
+
+    if [[ "$dry_run" == "--dry-run" ]]; then
+        echo ""
+        echo -e "${YELLOW}[dry-run]${NC} Would execute workflow"
+        return 0
+    fi
+
+    # Check if workflow file exists
+    if [[ ! -f "$resolved_path" ]]; then
+        echo ""
+        warn "Workflow file not found: $resolved_path"
+        echo ""
+        echo "The workflow file needs to be installed. Options:"
+        echo "  1. Install BMAD in your project: npx bmad install"
+        echo "  2. Set BMAD_PROJECT_ROOT to specify location"
+        echo ""
+        echo "Agent file: $agent_file"
+        return 1
+    fi
+
+    # Execute workflow
+    echo ""
+    echo -e "${GREEN}→${NC} Executing workflow..."
+    echo ""
+
+    # Display workflow content
+    echo -e "${BLUE}--- Workflow Content ---${NC}"
+    cat "$resolved_path"
+    echo -e "${BLUE}--- End Workflow ---${NC}"
+    echo ""
+    echo -e "${GREEN}✓${NC} Workflow loaded. Execute according to workflow instructions."
+}
+
 # Main dispatch
 main() {
     if [[ $# -eq 0 ]]; then
@@ -694,13 +1033,21 @@ main() {
     shift
 
     case "$cmd" in
+        # Agent dispatch commands
+        dispatch|run)
+            cmd_dispatch "$@"
+            ;;
+        triggers)
+            cmd_triggers "$@"
+            ;;
+        # Workflow management commands
         list)
             cmd_list "$@"
             ;;
         generate|gen)
             cmd_generate "$@"
             ;;
-        start|run)
+        start)
             cmd_start "$@"
             ;;
         status)
