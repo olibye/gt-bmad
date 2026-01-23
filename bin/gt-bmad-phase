@@ -140,6 +140,7 @@ Phase Gates:
 
 Phase Transitions:
   start <phase>           Start a phase (spawns primary agent)
+  complete <phase>        Complete a phase (close the phase gate)
   advance                 Advance to next phase if gates met
   handoff <phase>         Create handoff context for phase transition
 
@@ -266,18 +267,35 @@ cmd_check() {
     else
         for dep in ${deps//,/ }; do
             local dep_name=$(get_phase_field "$dep" "name")
-            local dep_artifacts=$(get_phase_field "$dep" "artifacts")
 
-            echo "  Checking Phase $dep ($dep_name) artifacts:"
+            echo "  Checking Phase $dep ($dep_name):"
 
-            for artifact in ${dep_artifacts//,/ }; do
-                if artifact_exists "$artifact" "$project_root"; then
-                    echo -e "    ${GREEN}✓${NC} $artifact"
-                else
-                    echo -e "    ${RED}✗${NC} $artifact (missing)"
-                    all_met=false
+            # Check if previous phase gate is closed (beads-based check)
+            local prev_gate
+            prev_gate=$(bd list --label "phase:$dep" --label "type:gate" \
+                --status closed --json 2>/dev/null | jq -r '.[0].id' 2>/dev/null)
+
+            if [[ -n "$prev_gate" && "$prev_gate" != "null" ]]; then
+                echo -e "    ${GREEN}✓${NC} Phase gate closed (beads)"
+            else
+                # Fall back to artifact-based check
+                local dep_artifacts=$(get_phase_field "$dep" "artifacts")
+                local artifacts_met=true
+
+                for artifact in ${dep_artifacts//,/ }; do
+                    if artifact_exists "$artifact" "$project_root"; then
+                        echo -e "    ${GREEN}✓${NC} $artifact"
+                    else
+                        echo -e "    ${RED}✗${NC} $artifact (missing)"
+                        artifacts_met=false
+                        all_met=false
+                    fi
+                done
+
+                if ! $artifacts_met; then
+                    echo -e "    ${YELLOW}!${NC} No phase gate found - using artifact checks"
                 fi
-            done
+            fi
         done
     fi
 
@@ -292,7 +310,7 @@ cmd_check() {
     else
         echo -e "${RED}✗ Phase $phase prerequisites NOT met${NC}"
         echo ""
-        echo "Complete the missing artifacts before starting Phase $phase."
+        echo "Complete the missing artifacts or close the phase gate before starting Phase $phase."
         return 1
     fi
 }
@@ -421,12 +439,41 @@ cmd_start() {
     echo "  Primary agent: $primary"
     echo ""
 
-    # Create phase tracking bead
-    local phase_bead
-    if phase_bead=$(bd create --title "BMAD Phase $phase: $name" --type task --priority 1 2>&1 | grep -oE '[a-z]+-[a-z0-9]+' | head -1); then
-        success "Created phase bead: $phase_bead"
+    # Create phase gate bead
+    local phase_gate
+    if phase_gate=$(bd create "Phase $phase: $name - Gate" \
+        --type task \
+        --label "phase:$phase" \
+        --label "type:gate" \
+        --priority 1 \
+        --json 2>/dev/null | jq -r '.id' 2>/dev/null); then
+
+        if [[ -n "$phase_gate" && "$phase_gate" != "null" ]]; then
+            success "Created phase gate bead: $phase_gate"
+
+            # If not phase 1, add dependency on previous phase gate
+            if [[ $phase -gt 1 ]]; then
+                local prev_phase=$((phase - 1))
+                local prev_gate
+                prev_gate=$(bd list --label "phase:$prev_phase" --label "type:gate" \
+                    --status closed --json 2>/dev/null | jq -r '.[0].id' 2>/dev/null)
+
+                if [[ -n "$prev_gate" && "$prev_gate" != "null" ]]; then
+                    if bd dep add "$phase_gate" "$prev_gate" 2>/dev/null; then
+                        info "Added dependency on Phase $prev_phase gate"
+                    else
+                        warn "Could not add dependency on previous phase gate"
+                    fi
+                fi
+            fi
+
+            # Export phase gate for later use
+            export BMAD_PHASE_GATE="$phase_gate"
+        else
+            warn "Could not create phase gate bead (continuing)"
+        fi
     else
-        warn "Could not create phase bead (continuing)"
+        warn "Could not create phase gate bead (continuing)"
     fi
 
     # Spawn primary agent
@@ -434,7 +481,7 @@ cmd_start() {
     echo "Spawning primary agent..."
 
     if [[ -x "$SCRIPT_DIR/gt-bmad-spawn" ]]; then
-        "$SCRIPT_DIR/gt-bmad-spawn" "$primary" ${phase_bead:+--bead "$phase_bead"}
+        "$SCRIPT_DIR/gt-bmad-spawn" "$primary" ${phase_gate:+--bead "$phase_gate"}
     else
         warn "gt-bmad-spawn not found. Spawn agent manually:"
         echo "  gt-bmad spawn $primary"
@@ -630,6 +677,54 @@ cmd_spawn() {
     fi
 }
 
+# Complete a phase (close the gate)
+cmd_complete() {
+    local phase="${1:-}"
+
+    if [[ -z "$phase" ]]; then
+        error "Usage: gt-bmad-phase complete <phase>"
+    fi
+
+    if [[ -z "${PHASES[$phase]:-}" ]]; then
+        error "Invalid phase: $phase"
+    fi
+
+    local name=$(get_phase_field "$phase" "name")
+
+    echo -e "${CYAN}🏁 Completing Phase $phase: $name${NC}"
+    echo ""
+
+    # Find and close the phase gate
+    local phase_gate
+    phase_gate=$(bd list --label "phase:$phase" --label "type:gate" \
+        --status open,in_progress --json 2>/dev/null | jq -r '.[0].id' 2>/dev/null)
+
+    if [[ -n "$phase_gate" && "$phase_gate" != "null" ]]; then
+        if bd close "$phase_gate" 2>/dev/null; then
+            success "Phase $phase gate closed: $phase_gate"
+            echo ""
+            echo "Phase $phase is now complete!"
+            echo ""
+            echo "Next steps:"
+            local next_phase=$((phase + 1))
+            if [[ $next_phase -le 4 ]]; then
+                local next_name=$(get_phase_field "$next_phase" "name")
+                echo "  gt-bmad-phase start $next_phase  # Start Phase $next_phase ($next_name)"
+                echo "  gt-bmad-phase advance           # Auto-advance to next phase"
+            else
+                echo "  All phases complete! 🎉"
+            fi
+        else
+            error "Failed to close phase gate: $phase_gate"
+        fi
+    else
+        warn "Phase gate not found for Phase $phase"
+        echo ""
+        echo "The phase may have already been completed, or no gate was created."
+        echo "Check with: bd list --label 'phase:$phase' --label 'type:gate'"
+    fi
+}
+
 # Verify all phases
 cmd_verify() {
     local project_root=$(find_project_root)
@@ -696,6 +791,9 @@ main() {
             ;;
         start)
             cmd_start "$@"
+            ;;
+        complete|done)
+            cmd_complete "$@"
             ;;
         advance)
             cmd_advance "$@"

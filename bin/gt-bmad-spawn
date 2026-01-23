@@ -55,6 +55,7 @@ get_menu_items() {
 # Generate PRIME.md content from agent YAML
 generate_prime_md() {
     local agent="$1"
+    local mol_id="${2:-}"
     local file=$(get_agent_file "$agent")
 
     local name=$(yaml_get "$file" "name")
@@ -101,6 +102,37 @@ You can execute the following workflows when triggered:
 
 $menu_items
 
+EOF
+
+    # Add workflow context if molecule ID provided
+    if [[ -n "$mol_id" ]]; then
+        # Try to get workflow name from environment or context
+        local workflow_name="${BMAD_WORKFLOW_NAME:-workflow}"
+
+        cat <<EOF
+## Workflow Context
+
+You are working on a tracked workflow:
+- **Molecule ID:** $mol_id
+- **Workflow:** $workflow_name
+
+**Essential beads commands:**
+\`\`\`bash
+bd ready --mol $mol_id                      # Show next available tasks
+bd show <task-id>                           # View task details and dependencies
+bd update <task-id> --status in_progress   # Start work on a task
+bd close <task-id>                          # Complete a task
+bd create "<title>" --parent <task-id>     # Create subtask
+\`\`\`
+
+**Your workflow:** Execute tasks in dependency order. Use \`bd ready --mol $mol_id\` to find unblocked work.
+
+**NEVER use TodoWrite** - use \`bd\` commands exclusively for task management.
+
+EOF
+    fi
+
+    cat <<EOF
 ## Integration with GasTown
 
 You are running as a GasTown polecat. Key commands:
@@ -139,13 +171,14 @@ generate_polecat_name() {
 # Spawn a polecat with BMAD agent persona
 cmd_spawn() {
     if [[ $# -eq 0 ]]; then
-        echo "Usage: gt-bmad spawn <agent> [--rig <rig>] [--bead <bead>] [--name <name>] [--dry-run]"
+        echo "Usage: gt-bmad spawn <agent> [--rig <rig>] [--bead <bead>] [--mol <mol-id>] [--name <name>] [--dry-run]"
         echo ""
         echo "Options:"
-        echo "  --rig <rig>    Target rig (default: bmad)"
-        echo "  --bead <bead>  Existing bead to assign (creates one if not provided)"
-        echo "  --name <name>  Polecat name (auto-generated if not provided)"
-        echo "  --dry-run      Show what would be done without doing it"
+        echo "  --rig <rig>      Target rig (default: bmad)"
+        echo "  --bead <bead>    Existing bead to assign (creates one if not provided)"
+        echo "  --mol <mol-id>   Molecule ID for workflow context"
+        echo "  --name <name>    Polecat name (auto-generated if not provided)"
+        echo "  --dry-run        Show what would be done without doing it"
         echo ""
         echo "Available agents:"
         for file in "$BMAD_AGENTS_DIR"/*.agent.yaml; do
@@ -162,6 +195,7 @@ cmd_spawn() {
     local bead=""
     local polecat_name=""
     local dry_run=false
+    local mol_id=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -172,6 +206,10 @@ cmd_spawn() {
                 ;;
             --bead)
                 bead="$2"
+                shift 2
+                ;;
+            --mol|--molecule)
+                mol_id="$2"
                 shift 2
                 ;;
             --name)
@@ -219,7 +257,7 @@ cmd_spawn() {
     local polecat_dir="$polecats_dir/$polecat_name"
 
     # Generate CLAUDE.md content (persona for the polecat)
-    local persona_content=$(generate_prime_md "$agent")
+    local persona_content=$(generate_prime_md "$agent" "$mol_id")
 
     if $dry_run; then
         echo ""
@@ -280,6 +318,13 @@ cmd_spawn() {
     echo "$persona_content" > "$polecat_dir/CLAUDE.md"
     success "Wrote CLAUDE.md with $agent persona"
 
+    # Export molecule context if provided
+    if [[ -n "$mol_id" ]]; then
+        export BMAD_MOLECULE_ID="$mol_id"
+        [[ -n "${BMAD_WORKFLOW_NAME:-}" ]] && export BMAD_WORKFLOW_NAME
+        success "Molecule context exported: $mol_id"
+    fi
+
     # Step 5: Assign bead to polecat via hook
     info "Assigning work to polecat..."
     # Use gt sling to assign the bead and start the session
@@ -298,10 +343,21 @@ cmd_spawn() {
     echo "  Rig:       $rig"
     echo "  Worktree:  $polecat_dir"
     echo "  Bead:      $bead"
+    if [[ -n "$mol_id" ]]; then
+        echo "  Molecule:  $mol_id"
+    fi
     echo ""
     echo "To interact:"
     echo "  tmux attach -t gt-$rig-$polecat_name"
     echo ""
     echo "To check status:"
     echo "  gt polecat status $rig/$polecat_name"
+    if [[ -n "$mol_id" ]]; then
+        echo ""
+        echo "Workflow commands (inside polecat session):"
+        echo "  bd ready --mol $mol_id              # Show next tasks"
+        echo "  bd show <task-id>                    # View task"
+        echo "  bd update <task-id> --status in_progress  # Start task"
+        echo "  bd close <task-id>                   # Complete task"
+    fi
 }

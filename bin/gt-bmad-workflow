@@ -68,6 +68,7 @@ Workflow Management:
   list                    List available BMAD workflows
   generate <workflow>     Generate Gas Town formula from BMAD workflow
   start <workflow>        Start a tracked workflow (pour molecule)
+  auto-start <workflow>   Auto-generate formula, pour molecule, and create step beads
   status [mol-id]         Show current workflow progress
   step <mol-id>           Mark current step complete and show next
   close <mol-id>          Complete the workflow
@@ -88,6 +89,7 @@ Examples:
   gt-bmad-workflow list
   gt-bmad-workflow generate brainstorming
   gt-bmad-workflow start brainstorming
+  gt-bmad-workflow auto-start brainstorming  # Full auto-setup with step beads
   gt-bmad-workflow status bmad-mol-12345
 
   # From within a running workflow:
@@ -101,6 +103,7 @@ Integration:
   - Central monitoring via bd mol status
   - Handoffs between agents
   - Progress queries (bd mol progress <id>)
+  - Automatic step bead creation with dependencies
 
 Environment Variables:
   BMAD_MOLECULE_ID    Set automatically when workflow starts via this tool
@@ -412,6 +415,96 @@ EOF
     echo "  3. Or use bd formula show bmad-$workflow_name"
 }
 
+# Infer dependency type from step structure
+infer_dependency_type() {
+    local step_file="$1"
+
+    if [[ ! -f "$step_file" ]]; then
+        echo "blocks"
+        return 0
+    fi
+
+    local step_content=$(cat "$step_file" 2>/dev/null || echo "")
+
+    # Check for parallel execution hints
+    if echo "$step_content" | grep -qi "parallel\|concurrent\|simultaneously"; then
+        echo "tracks"
+    else
+        echo "blocks"
+    fi
+}
+
+# Create workflow step beads with automatic dependencies
+create_workflow_step_beads() {
+    local workflow_name="$1"
+    local mol_id="$2"
+    local workflow_dir="$3"
+
+    info "Creating workflow step beads with dependencies..."
+
+    # Find all step files (step-01-*.md, step-02-*.md, etc.)
+    local step_files=()
+    while IFS= read -r step_file; do
+        [[ -z "$step_file" ]] && continue
+        # Skip continuation steps (step-01b-continue.md)
+        if ! basename "$step_file" | grep -q "continue.md$"; then
+            step_files+=("$step_file")
+        fi
+    done < <(get_step_files "$workflow_dir")
+
+    if [[ ${#step_files[@]} -eq 0 ]]; then
+        warn "No step files found in workflow: $workflow_name"
+        return 1
+    fi
+
+    # First pass: create all step beads and collect IDs
+    declare -A step_ids
+    local prev_step_id=""
+    local step_count=0
+
+    for step_file in "${step_files[@]}"; do
+        # Extract step number and title
+        local step_num=$(basename "$step_file" | sed -E 's/step-([0-9]+).*/\1/')
+        local step_title=$(grep -m1 "^# " "$step_file" | sed 's/^# //' || echo "Step $step_num")
+
+        # Create bead for this step
+        info "Creating step bead: $step_title"
+        local step_id
+        if step_id=$(bd create "$step_title" \
+            --type task \
+            --parent "$mol_id" \
+            --label "step:$step_num" \
+            --label "workflow:$workflow_name" \
+            --json 2>/dev/null | jq -r '.id' 2>/dev/null); then
+
+            if [[ -n "$step_id" && "$step_id" != "null" ]]; then
+                step_ids[$step_num]="$step_id"
+                step_count=$((step_count + 1))
+
+                # Add dependency on previous step (blocks relationship)
+                if [[ -n "$prev_step_id" ]]; then
+                    local dep_type=$(infer_dependency_type "$step_file")
+                    if bd dep add "$step_id" "$prev_step_id" --type "$dep_type" 2>/dev/null; then
+                        info "  Added dependency: step-$step_num depends on previous ($dep_type)"
+                    else
+                        # Try without --type flag (older bd versions)
+                        bd dep add "$step_id" "$prev_step_id" 2>/dev/null || warn "  Could not add dependency"
+                    fi
+                fi
+
+                prev_step_id="$step_id"
+            else
+                warn "Failed to create step bead for: $step_title"
+            fi
+        else
+            warn "Failed to create step bead for: $step_title"
+        fi
+    done
+
+    success "Created $step_count workflow step beads"
+    return 0
+}
+
 # Start a tracked workflow (pour molecule)
 cmd_start() {
     local workflow_name="$1"
@@ -460,6 +553,83 @@ cmd_start() {
             echo "Or use context-aware commands:"
             echo "  gt-bmad-workflow context     # Show current workflow"
             echo "  gt-bmad-workflow step-done   # Mark step complete"
+        fi
+    else
+        error "Failed to pour molecule: $pour_output"
+    fi
+}
+
+# Auto-start workflow: generate formula + pour molecule + create step beads
+cmd_auto_start() {
+    local workflow_name="$1"
+    shift || true
+
+    if [[ -z "$workflow_name" ]]; then
+        error "Usage: gt-bmad-workflow auto-start <workflow-name> [--var key=value ...]"
+    fi
+
+    local workflow_dir
+    workflow_dir=$(find_workflow "$workflow_name") || error "Workflow not found: $workflow_name"
+
+    info "Auto-starting workflow: $workflow_name"
+
+    # Step 1: Generate formula if not exists
+    local formula_file="$FORMULA_OUTPUT_DIR/bmad-$workflow_name.formula.toml"
+    if [[ ! -f "$formula_file" ]]; then
+        info "Generating formula for $workflow_name..."
+        cmd_generate "$workflow_name"
+    else
+        info "Formula already exists: $formula_file"
+    fi
+
+    # Step 2: Pour molecule
+    info "Creating molecule for $workflow_name..."
+    local formula_name="bmad-$workflow_name"
+    local pour_output
+    if pour_output=$(bd --no-daemon mol pour "$formula_name" "$@" 2>&1); then
+        success "Workflow molecule created"
+
+        # Extract molecule ID from output
+        local mol_id
+        mol_id=$(echo "$pour_output" | grep -oE '(hq-mol-[a-z0-9]+|gt-[a-z0-9]+|bmad-mol-[a-z0-9]+)' | head -1)
+
+        if [[ -n "$mol_id" ]]; then
+            # Save context for runtime integration
+            save_context "$mol_id" "$workflow_name"
+
+            # Step 3: Create step beads with dependencies
+            info "Creating workflow step beads..."
+            if create_workflow_step_beads "$workflow_name" "$mol_id" "$workflow_dir"; then
+                success "Workflow step beads created successfully"
+            else
+                warn "Some step beads could not be created"
+            fi
+
+            # Export context for polecat
+            export BMAD_MOLECULE_ID="$mol_id"
+            export BMAD_WORKFLOW_NAME="$workflow_name"
+
+            echo ""
+            success "Workflow $workflow_name ready (molecule: $mol_id)"
+            echo ""
+            echo "Workflow tracking active:"
+            echo "  Molecule ID: $mol_id"
+            echo "  Workflow: $workflow_name"
+            echo ""
+            echo "Essential commands:"
+            echo "  bd ready --mol $mol_id              # Show next available tasks"
+            echo "  bd show <task-id>                    # View task details"
+            echo "  bd update <task-id> --status in_progress  # Start work"
+            echo "  bd close <task-id>                   # Complete work"
+            echo ""
+            echo "Spawn polecat with workflow context:"
+            echo "  gt-bmad-spawn <agent> --mol $mol_id"
+            echo ""
+            echo "Or set environment variables manually:"
+            echo "  export BMAD_MOLECULE_ID=$mol_id"
+            echo "  export BMAD_WORKFLOW_NAME=$workflow_name"
+        else
+            error "Could not extract molecule ID from pour output"
         fi
     else
         error "Failed to pour molecule: $pour_output"
@@ -1076,6 +1246,9 @@ main() {
             ;;
         start)
             cmd_start "$@"
+            ;;
+        auto-start|autostart)
+            cmd_auto_start "$@"
             ;;
         status)
             cmd_status "$@"
