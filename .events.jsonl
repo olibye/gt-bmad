@@ -45,3 +45,13 @@
 {"ts":"2026-01-17T19:02:13Z","source":"gt","type":"spawn","actor":"gt","payload":{"polecat":"furiosa","rig":"foilracing"},"visibility":"feed"}
 {"ts":"2026-01-17T19:02:16Z","source":"gt","type":"sling","actor":"mayor","payload":{"bead":"fo-4h7","target":"foilracing/polecats/furiosa"},"visibility":"feed"}
 {"ts":"2026-01-17T19:05:28Z","source":"gt","type":"done","actor":"foilracing/furiosa","payload":{"bead":"furiosa-mkioc90o","branch":"polecat/furiosa-mkioc90o"},"visibility":"feed"}
+{"ts":"2026-01-17T19:55:26Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-62802","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-62802"},"visibility":"feed"}
+{"ts":"2026-01-17T19:56:50Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-70450","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-70450"},"visibility":"feed"}
+{"ts":"2026-01-17T19:57:47Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-75194","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-75194"},"visibility":"feed"}
+{"ts":"2026-01-17T19:57:56Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-75737","cwd":"/Users/oliver/gt-bmad","role":"mayor","session_id":"mayor-75737"},"visibility":"feed"}
+{"ts":"2026-01-17T19:58:50Z","source":"gt","type":"nudge","actor":"mayor","payload":{"reason":"[from mayor] Process the merge queue - fo-p0g has been ready for 53 minutes","rig":"foilracing","target":"foilracing/refinery"},"visibility":"feed"}
+{"ts":"2026-01-17T19:58:51Z","source":"gt","type":"nudge","actor":"mayor","payload":{"reason":"[from mayor] Process your mail - POLECAT_DONE from furiosa","rig":"foilracing","target":"foilracing/witness"},"visibility":"feed"}
+{"ts":"2026-01-17T20:06:13Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-98490","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-98490"},"visibility":"feed"}
+{"ts":"2026-01-18T10:52:56Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-11308","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-11308"},"visibility":"feed"}
+{"ts":"2026-01-18T10:54:35Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-16186","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-16186"},"visibility":"feed"}
+{"ts":"2026-01-18T22:13:47Z","source":"gt","type":"session_start","actor":"mayor","payload":{"actor_pid":"mayor-10969","cwd":"/Users/oliver/gt-bmad/mayor","role":"mayor","session_id":"mayor-10969"},"visibility":"feed"}
