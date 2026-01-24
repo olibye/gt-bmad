@@ -17,6 +17,13 @@ BMAD_WORKFLOW_PATH_PATTERNS=(
     "$GT_BMAD_ROOT/bmad/src/modules/bmm/workflows"
     "$GT_BMAD_ROOT/bmad/src/modules/bmb/workflows"
     "$GT_BMAD_ROOT/bmad/src/modules/cis/workflows"
+    # Also check in rig directories (mayor, refinery, etc.)
+    "$GT_BMAD_ROOT/bmad/mayor/rig/src/core/workflows"
+    "$GT_BMAD_ROOT/bmad/mayor/rig/src/modules/bmm/workflows"
+    "$GT_BMAD_ROOT/bmad/mayor/rig/src/modules/bmb/workflows"
+    "$GT_BMAD_ROOT/bmad/mayor/rig/src/modules/cis/workflows"
+    "$GT_BMAD_ROOT/bmad/refinery/rig/src/core/workflows"
+    "$GT_BMAD_ROOT/bmad/refinery/rig/src/modules/bmm/workflows"
     # Also check in polecat worktrees
     "$GT_BMAD_ROOT/bmad/polecats/*/bmad/src/core/workflows"
     "$GT_BMAD_ROOT/bmad/polecats/*/bmad/src/modules/bmm/workflows"
